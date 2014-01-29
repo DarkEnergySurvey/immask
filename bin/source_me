@@ -1,0 +1,10 @@
+# Start the EUPS LSST mode
+echo "Loading up LSST frame work "
+source /opt/lsst/osx-10.8-x86_64/loadLSST.csh
+
+# Order is important!
+echo "Setting up LSST packages via eups"
+setup afw 
+setup meas_algorithms 7.1.2.0+2
+setup ip_isr 7.1.1.0+3
+
