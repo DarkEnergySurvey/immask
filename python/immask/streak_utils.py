@@ -1,7 +1,8 @@
 def read_bkg_image(bkgfile):
 
     """
-    Simple function to read in the SExtractor background image.
+    Simple function to read in the SExtractor background image using
+    DES extension keywords.
     """
 
     print "# Reading background file:%s" % bkgfile
