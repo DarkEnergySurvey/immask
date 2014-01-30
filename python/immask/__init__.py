@@ -6,7 +6,7 @@ version = __version__
  The DESDM immask module, masking cosmic ray and streaks on
  single-frame CCDs for now.
 
-$Id:$
+$Id$
 $Rev::                                  $:  # Revision of last commit.
 $LastChangedBy::                        $:  # Author of last commit.
 $LastChangedDate::                      $:  # Date of last commit.
