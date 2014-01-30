@@ -1,5 +1,17 @@
 #!/usr/bin/env python
 
+"""
+Suite of fuctions and class for the DESDM immask python module.
+
+$Id$
+$Rev::                                  $:  # Revision of last commit.
+$LastChangedBy::                        $:  # Author of last commit.
+$LastChangedDate::                      $:  # Date of last commit.
+
+@authors: Felipe Menanteau <felipe@illinois.edu>
+
+"""
+
 import math
 import os,sys
 import shutil
