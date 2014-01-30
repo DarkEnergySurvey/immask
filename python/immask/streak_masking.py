@@ -1,6 +1,12 @@
 #!/usr/bin/env python
+
 """
-$Id: maskhough.py 10955 2013-11-21 23:29:52Z kadrlica $
+Stand-alone version of the DESDM streak-finder
+
+$Id$
+$Rev::                                  $:  # Revision of last commit.
+$LastChangedBy::                        $:  # Author of last commit.
+$LastChangedDate::                      $:  # Date of last commit.
 
 Mask streaks from airplanes, satellites, UFOs, etc.
 by using a Hough transform. Apart from the usual numpy 
@@ -11,7 +17,7 @@ fitsio  -- https://github.com/esheldon/fitsio
 @authors: Eli Rykoff            <rykoff@slac.stanford.edu>
 @authors: Alex Drlica-Wagner    <kadrlica@fnal.gov>
 --
-Made into a callable python class and stand-alone
+Made into a callable opject-oriented python class and stand-alone
 @updates: Felipe Menanteau <felipe@illinois.edu> 
 --
 
