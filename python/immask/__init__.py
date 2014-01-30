@@ -1,6 +1,17 @@
 __author__  = "Felipe Menanteau"
 __version__ = '0.1'
 version = __version__
+
+"""
+ The DESDM immask module, masking cosmic ray and streaks on
+ single-frame CCDs for now.
+
+$Id:$
+$Rev::                                  $:  # Revision of last commit.
+$LastChangedBy::                        $:  # Author of last commit.
+$LastChangedDate::                      $:  # Date of last commit.
+"""
+
 from . import immasklib
 from .immasklib import DESIMA
 from .immasklib import elapsed_time
