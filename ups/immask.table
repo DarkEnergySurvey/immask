@@ -1,0 +1,7 @@
+setupRequired("python")
+setupRequired("scipy")
+setupRequired("numpy")
+setupRequired("fitsio")
+setupRequired("pyhough")
+envAppend(PYTHONPATH, ${PRODUCT_DIR}/python)
+envAppend(PATH, ${PRODUCT_DIR}/bin)
