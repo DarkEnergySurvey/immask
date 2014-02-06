@@ -1,7 +1,5 @@
-#!/usr/bin/env python
-
 """
-Stand-alone version of the DESDM streak-finder
+Class and functions for the stand-alone version of the DESDM streak-finder
 
 $Id$
 $Rev::                                  $:  # Revision of last commit.
@@ -48,7 +46,6 @@ class STREAK:
         # Otherwise read in the fileName and pass then as ndarrays
         else:
             self.setImage(**keys)
-
 
     # ***************************************************************************
     # Auxiliary I/0 Functions and name settings required for stand-alone version
@@ -896,7 +893,7 @@ def cmdline():
 
     # The positional arguments
     parser.add_argument("fileName", help="Input DESDM fits file to process (fz/fits)")
-    parser.add_argument("bkgfile",  help="Input background FITS file (fz/fits)")
+    parser.add_argument("bkgfile",  help="Input background FITS file (fz/fits) from SExtractor")
     parser.add_argument("outdir",   help="Path to output files [will preserve same name]")
 
     parser.add_argument("--compress", action="store_true", default=False,
@@ -921,7 +918,6 @@ def cmdline():
                         help="Maximum width in pixels ")
     parser.add_argument("--max_angle",   type=float, action="store", default=15,
                         help="Maximum angle alowed (deg), avoids curves")
-
     # For masking
     parser.add_argument("--mask_factor",type=float, action="store", default=1.5,
                         help="Factor to increase streak width for masking")
