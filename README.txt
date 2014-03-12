@@ -1,9 +1,10 @@
-DESDM Image Masking module
+DESDM image masking module
 
-Mask streaks, and cosmic rays 
+Mask streaks and cosmic rays 
 Requires:
 
-nympy
+numpy
 scipy
-fitsio:  https://github.com/esheldon/fitsio version 0.9.4 or above
+fitsio:  https://github.com/esheldon/fitsio (>= v0.9.4)
+esutil:  http://esutil.googlecode.com/svn/trunk/esutil
 pyhough: https://github.com/erykoff/pyhough 
