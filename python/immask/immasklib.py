@@ -32,752 +32,745 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.path
 
-"""
-   Set of Cosmic Ray rejection routines using the LSST framework
-   Felipe Menanteau, NCSA (felipe@illinois.edu)
-"""
 
 class DESIMA:
-   
-   """
-   A Class to handle DECam fits/fits.fz files and objectivize them,
-   mask cosmic rays using fitsio to open/read/close files and the
-   LSST framework to find and mask the cosmic rays.
+    """
+    A Class to handle DECam fits/fits.fz files. Uses fitsio to 
+    open/read/close files. The LSST framework is used to to find
+    and mask the cosmic rays. A Hough transform algorithm is
+    implemented to identify and mask streaks from satellites, etc.
 
-   Felipe Menanteau, NCSA, University of Illinois.
-   """
+    Example:
+    >>> desobj = DESIMA(fileName,outdir)
+    >>> desobj.CRs()
+    >>> desobj.mask_streaks()
+    >>> desobj.write()
+    """
 
-   # Arguments for cosmic-ray masking
-   CR_ARGS = collections.OrderedDict()
-   CR_ARGS['interpCR']         = dict(action="store_true", default=True,
-                                      help="Interpolate CR in Science image.")
-   CR_ARGS['noInterpCR']       = dict(action="store_true", default=False,
-                                      help="Do not Interpolate CR in Science image.")
-   CR_ARGS['dilateCR']         = dict(action="store_true", default=False,
-                                      help="Dilate CR mask by 1 pixel.")
-   CR_ARGS['nGrowCR']          = dict(type=int, action="store", default=1,
-                                      help="Dilate CR mask by nGrowCR pixels.")
-   CR_ARGS['fwhm']             = dict(type=float, action="store", default=None,
-                                      help="Set a FWHM [pixels] value that overides the header FWHM value in image")
-   CR_ARGS['minSigma']         = dict(type=float, action="store", default=5.0,
-                                      help="CRs must be > this many sky-sig above sky")
-   CR_ARGS['min_DN']           = dict(type=int, action="store", default=150,
-                                      help="CRs must have > this many DN (== electrons/gain) in initial detection")
+    ### Command line arguments for cosmic-ray masking
+    CR_ARGS = collections.OrderedDict()
+    CR_ARGS['interpCR']         = dict(action="store_true", default=True,
+                                       help="Interpolate CR in Science image.")
+    CR_ARGS['noInterpCR']       = dict(action="store_true", default=False,
+                                       help="Do not Interpolate CR in Science image.")
+    CR_ARGS['dilateCR']         = dict(action="store_true", default=False,
+                                       help="Dilate CR mask by 1 pixel.")
+    CR_ARGS['nGrowCR']          = dict(type=int, action="store", default=1,
+                                       help="Dilate CR mask by nGrowCR pixels.")
+    CR_ARGS['fwhm']             = dict(type=float, action="store", default=None,
+                                       help="Set a FWHM [pixels] value that overides the header FWHM value in image")
+    CR_ARGS['minSigma']         = dict(type=float, action="store", default=5.0,
+                                       help="CRs must be > this many sky-sig above sky")
+    CR_ARGS['min_DN']           = dict(type=int, action="store", default=150,
+                                       help="CRs must have > this many DN (== electrons/gain) in initial detection")
+  
+    ### Command line arguments for streak masking
+    STREAK_ARGS = collections.OrderedDict()
+    STREAK_ARGS['bkgfile']      = dict(help="Input background FITS file (fz/fits)")
+    STREAK_ARGS['draw']         = dict(action='store_true',default=False,
+                                       help="Use matplotlib to draw diagnostic plots.")
+    STREAK_ARGS['template_dir'] = dict(default="/dev/null",
+                                       help="Directory containing Hough template.")
+    # Image pre-processing
+    STREAK_ARGS['bin_factor']   = dict(type=int, action="store", default=8,
+                                       help="Binning factor to beat down sky noise")
+    # For detection, merging, and characterization
+    STREAK_ARGS['nsig_sky']     = dict(type=float, action="store", default=1.5,
+                                       help="Threshold for sky noise")
+    STREAK_ARGS['nsig_detect']  = dict(type=float, action="store", default=14,
+                                       help="Threshold for Hough peak detection")
+    STREAK_ARGS['nsig_merge']   = dict(type=float, action="store", default=8,
+                                       help="Threshold for Hough peak merging ")
+    STREAK_ARGS['nsig_mask']    = dict(type=float, action="store", default=8,
+                                       help="Threshold for Hough peak characterization")
+    # Quality cuts
+    STREAK_ARGS['max_width']    = dict(type=float, action="store", default=150,
+                                       help="Maximum width in pixels ")
+    STREAK_ARGS['max_angle']    = dict(type=float, action="store", default=15,
+                                       help="Maximum angle alowed (deg), avoids curves")
+    # For clipping the ends of streak
+    STREAK_ARGS['clip']         = dict(action="store_true", 
+                                       help="Clip underpopulated ends of the streak mask.")
+    STREAK_ARGS['nsig_clip']    = dict(type=float, action="store", default=2,
+                                       help="Clip chunks that are more than 'nsig' underdense.")
+    STREAK_ARGS['clip_angle']   = dict(type=float, action="store", default=45,
+                                       help="Clip streaks close to the given abs. angle (deg).")
+    STREAK_ARGS['clip_range']   = dict(type=float, action="store", default=10,
+                                       help="Allowed clip angle range (deg); >90 to accept all angles")
+    # For masking
+    STREAK_ARGS['mask_factor']  = dict(type=float, action="store", default=1.5,
+                                       help="Factor to increase streak width for masking")
+    STREAK_ARGS['maskbits']     = dict(type=int, action="store", default=1023,
+                                       help="Ignore these mask bits ")
+    STREAK_ARGS['setbit']       = dict(type=int, action="store", default=1024,
+                                       help="New streak mask bit")
+    STREAK_ARGS['maxmask']      = dict(type=int, action="store", default=1000,
+                                       help="Maximum number of streaks to mask [NOT IMPLEMENTED]")
 
-   # Arguments for streak masking
-   STREAK_ARGS = collections.OrderedDict()
-   STREAK_ARGS['bkgfile']      = dict(help="Input background FITS file (fz/fits)")
-   STREAK_ARGS['draw']         = dict(action='store_true',default=False,
-                                      help="Use matplotlib to draw diagnostic plots.")
-   STREAK_ARGS['template_dir'] = dict(default="/dev/null",
-                                      help="Directory containing Hough template.")
-   # Image pre-processing
-   STREAK_ARGS['bin_factor']   = dict(type=int, action="store", default=8,
-                                      help="Binning factor to beat down sky noise")
-   # For detection, merging, and characterization
-   STREAK_ARGS['nsig_sky']     = dict(type=float, action="store", default=1.5,
-                                      help="Threshold for sky noise")
-   STREAK_ARGS['nsig_detect']  = dict(type=float, action="store", default=14,
-                                      help="Threshold for Hough peak detection")
-   STREAK_ARGS['nsig_merge']   = dict(type=float, action="store", default=8,
-                                      help="Threshold for Hough peak merging ")
-   STREAK_ARGS['nsig_mask']    = dict(type=float, action="store", default=8,
-                                      help="Threshold for Hough peak characterization")
-   # Quality cuts
-   STREAK_ARGS['max_width']    = dict(type=float, action="store", default=150,
-                                      help="Maximum width in pixels ")
-   STREAK_ARGS['max_angle']    = dict(type=float, action="store", default=15,
-                                      help="Maximum angle alowed (deg), avoids curves")
-   # For masking
-   STREAK_ARGS['mask_factor']  = dict(type=float, action="store", default=1.5,
-                                      help="Factor to increase streak width for masking")
-   STREAK_ARGS['maskbits']     = dict(type=int, action="store", default=1023,
-                                      help="Ignore these mask bits ")
-   STREAK_ARGS['setbit']       = dict(type=int, action="store", default=1024,
-                                      help="New streak mask bit")
-   STREAK_ARGS['maxmask']      = dict(type=int, action="store", default=1000,
-                                      help="Maximum number of streaks to mask [NOT IMPLEMENTED]")
-   # For clipping ends of streak
-   STREAK_ARGS['clip_mask']    = dict(action="store_true", 
-                                      help="Clip underpopulated ends of the streak mask.")
-   STREAK_ARGS['nsig_clip']    = dict(type=float, default=2,
-                                      help="Clip chunks that are more than 'nsig' underdense.")
-   STREAK_ARGS['clip_angle']   = dict(type=float, default=45,
-                                      help="Clip streaks close to the given abs. angle (deg).")
-   STREAK_ARGS['clip_delta']   = dict(type=float, default=10,
-                                      help="Clip angle range (deg); >90 for all angles")
+    def __init__ (self,fileName,outdir, **kwargs):
+        self.fileName  = extract_filename(fileName)
+        self.outdir    = outdir
+       
+        # Make sure the output directory exits
+        if not os.path.exists(outdir):
+            print "# Will create output directory  %s" % outdir
+            os.mkdir(outdir)
+          
+        # Gets SCI, MSK, WGT and created VAR
+        self.read_HDUs()
+  
+        # Make copies (shallow) of SCI, MSK, WGT and created VAR (OUT_*)
+        self.copy_ndarrays() 
+  
+  
+    def read_HDUs(self):
+        """
+        Read in the HDU as ndarrays and headers as dictionaries with fitsio for a DESDM/DECam image
+        """
+        # Get the fitsio element -- we'll modify this in place
+        print "# Reading in extensions and headers for %s" % self.fileName
+        self.ifits = fitsio.FITS(self.fileName,'r')
+        sci_hdu, msk_hdu, wgt_hdu = get_hdu_numbers(self.ifits)
+        # Read in the Science, Mask and Weight Images array with fitsio, as we'll
+        # need to write them out using fitsio once we are done with them
+        self.SCI = self.ifits[sci_hdu].read()
+        self.MSK = self.ifits[msk_hdu].read()
+        self.WGT = self.ifits[wgt_hdu].read()
+        # Now let's read the headers
+        self.h_sci = self.ifits[sci_hdu].read_header()
+        self.h_msk = self.ifits[msk_hdu].read_header()
+        self.h_wgt = self.ifits[wgt_hdu].read_header()     
+        # Get the image size to set the allowed fraction of image to be already masked
+        (self.ny,self.nx) = self.SCI.shape
+        # Pass them up
+        self.sci_hdu = sci_hdu
+        self.msk_hdu = msk_hdu
+        self.wgt_hdu = wgt_hdu
+        print "# Done reading HDU "
+  
+    def copy_ndarrays(self):
+        """
+        Make shallow copies (shallow is enough) of the SCI, MSK and WGT
+        ndarrays using python copy function to preserve the original
+        information of the fits files. We need to do this before they
+        are modified in place by the the LSST framework functions.
+        """
+        print "# Making shallow copies of SCI, MSK and WGT ndarrays"
+        self.OUT_SCI = copy.copy(self.SCI)
+        self.OUT_MSK = copy.copy(self.MSK)
+        self.OUT_WGT = copy.copy(self.WGT)
+        # A handy handle
+        self.headers = (self.h_sci,self.h_msk,self.h_wgt)
+        # Let's make a handle for the DESDM object
+        self.DESDMImage = (self.OUT_SCI,self.OUT_MSK,self.OUT_WGT)
+  
+  
+    # ********************************************************
+    #             *** Cosmic Ray rejection routines ***
+    # ********************************************************
+    """
+    Set of Cosmic Ray rejection routines using the LSST framework
+    Felipe Menanteau, NCSA (felipe@illinois.edu)
+    """
 
-
-   def __init__ (self,fileName,outdir, **kwargs):
-
-      self.fileName  = extract_filename(fileName)
-      self.outdir    = outdir
-      
-      # Make sure the output directory exits
-      if not os.path.exists(outdir):
-         print "# Will create output directory  %s" % outdir
-         os.mkdir(outdir)
+    def CRs(self,**kwargs):
+        """
+        Top-level function for CR masking
+        """
+        for key in np.intersect1d(self.CR_ARGS.keys(),kwargs.keys()):
+           self.__dict__[key] = kwargs[key]
          
-      # Gets SCI, MSK, WGT and created VAR
-      self.read_HDUs()
-
-      # Make copies (shallow) of SCI, MSK, WGT and created VAR (OUT_*)
-      self.copy_ndarrays() 
-
-
-   def read_HDUs(self):
-      """
-      Read in the HDU as ndarrays and headers as dictionaries with fitsio for a DESDM/DECam image
-      """
-      # Get the fitsio element -- we'll modify this in place
-      print "# Reading in extensions and headers for %s" % self.fileName
-      self.ifits = fitsio.FITS(self.fileName,'r')
-      sci_hdu, msk_hdu, wgt_hdu = get_hdu_numbers(self.ifits)
-      # Read in the Science, Mask and Weight Images array with fitsio, as we'll
-      # need to write them out using fitsio once we are done with them
-      self.SCI = self.ifits[sci_hdu].read()
-      self.MSK = self.ifits[msk_hdu].read()
-      self.WGT = self.ifits[wgt_hdu].read()
-      # Now let's read the headers
-      self.h_sci = self.ifits[sci_hdu].read_header()
-      self.h_msk = self.ifits[msk_hdu].read_header()
-      self.h_wgt = self.ifits[wgt_hdu].read_header()     
-      # Get the image size to set the allowed fraction of image to be already masked
-      (self.ny,self.nx) = self.SCI.shape
-      # Pass them up
-      self.sci_hdu = sci_hdu
-      self.msk_hdu = msk_hdu
-      self.wgt_hdu = wgt_hdu
-      print "# Done reading HDU "
-
-   def copy_ndarrays(self):
-      """
-      Make shallow copies (shallow is enough) of the SCI, MSK and WGT
-      ndarrays using python copy function to preserve the original
-      information of the fits files. We need to do this before they
-      are modified in place by the the LSST framework functions.
-      """
-      print "# Making shallow copies of SCI, MSK and WGT ndarrays"
-      self.OUT_SCI = copy.copy(self.SCI)
-      self.OUT_MSK = copy.copy(self.MSK)
-      self.OUT_WGT = copy.copy(self.WGT)
-      # A handy handle
-      self.headers = (self.h_sci,self.h_msk,self.h_wgt)
-      # Let's make a handle for the DESDM object
-      self.DESDMImage = (self.OUT_SCI,self.OUT_MSK,self.OUT_WGT)
-
-
-   # ********************************************************
-   #             *** Cosmic Ray rejection routines ***
-   # ********************************************************
-   def CRs(self,**kwargs):
-
-      """
-      Top-level function for CR masking
-      """
-      for key in np.intersect1d(self.CR_ARGS.keys(),kwargs.keys()):
-         self.__dict__[key] = kwargs[key]
-
-      # Make the individual calls
-      self.make_BAD_mask() # True by default, unless we decide not to.
-      self.make_lsst_image()
-      self.find_CRs()
-      self.fix_pixels_CR()
-      self.update_hdr_CR()
-
-
-   def set_DECamMaskPlaneDict(self):
-      
-      """
-      Dictionary to translate from DECam mask plane to LSST definition
-      To see all mask planes:
-            print msk.printMaskPlanes()
-      """
-      self.DECamMaskPlaneDict = dict(
-         BAD       = 0,  # set in bpm (hot/dead pixel/column) (was BPM)
-         SAT       = 1,  # saturated pixel (was SATURATE)
-         INTRP     = 2,  # interpolated pixel (was INTERP)
-         LOW       = 3,  # too little signal- i.e. poor read
-         CRAY      = 4,  # cosmic ray pixel N.b. not CR --- we'll set that ourselves later
-                         # CR is the name used in the LSST framework, and will supersede CRAY!
-         DETECTED  = 5,  # bright star pixel (was STAR)
-         TRAIL     = 6,  # bleed trail pixel
-         EDGEBLEED = 7,  # edge bleed pixel
-         SSXTALK   = 8,  # pixel potentially effected by xtalk from super-saturated source
-         EDGE      = 9,  # pixel flagged to exclude CCD glowing edges
-         STREAK    = 10, # streak 
-         FIX       = 11, # a bad pixel that was fixed
-         )
-
-
-   def make_BAD_mask(self):
-
-      """
-      Create a specific boolean masks to temporaryly deal with BPM
-      interpolation Mask for the BAD pixels mask, this won't be
-      requited if all of the BPM are masked by imdetrend in the
-      future. It assumes the following bit from the maskbit plane:
-
-          BADbit    = 1
-          INTERPbit = 4
-          EDGEbit   = 512
-      """
-      
-      print "# Creating BAD/BPM pixel mask for interpolation"
-      # Mask for BAD=1 pixels that have been already interpolated
-      # (INTERP=4), and keep the original values for later.  It is
-      # important to note that we modify only the MSK ndarray, which
-      # is the one used by the LSST framework. The original,
-      # unmodified values are keept in the copy for output OUT_MSK.
-      masked_bad        = (self.MSK & 1) > 0
-      masked_bad_interp = ((self.MSK & 4) > 0) & masked_bad
-      
-      # Create a boolean mask of the glowing edges, we don't need to
-      # keep the original values for later, as they are kept in the OUT_MSK copy.
-      masked_edge = (self.MSK & 512) > 0
-      
-      # Temporaly change values of 513 to 512 in order to avoid
-      # interpolating over glowing edges of ccds also labeled as BAD (512+1=513)
-      self.MSK[masked_edge] = 512
-
-      # Temporaryly change the values of BAD and INTERP pixels from 5
-      # to 4 for the MSK ndarray as we do not want to interpolate twice.
-      self.MSK[masked_bad_interp] = 4
-
-
-   def make_lsst_image(self):
-
-      import lsst.afw.image  as afwImage
-
-      """
-      Create and LSST-like image from the SCI, MSK and WGT
-      ndarrays. We pass them into the LSST framework structure to call
-      the CR finder.
-      """
-
-      print "# Making LSST image structure from SCI, MSK and VAR"
-      # 0 Set up the Mask Plane dictionay for DECam
-      self.set_DECamMaskPlaneDict()
-      # 1 - Science
-      self.sci = afwImage.ImageF(self.SCI)
-      # 2- The Mask plane Image and rewrite mask planes into LSST convention
-      self.msk = afwImage.MaskU(self.MSK)
-      self.msk.conformMaskPlanes(self.DECamMaskPlaneDict) 
-
-      # 3 - The variance Image
-      self.WGT_fixed = np.where(self.WGT<=0, self.WGT.max()/1e6, self.WGT) # Fix values < 0
-      self.VAR = 1/self.WGT_fixed
-      self.var = afwImage.ImageF(self.VAR)
-      # Into numpy-arrays to handle some numpy fast operations
-      self.scia = self.sci.getArray()
-      self.mska = self.msk.getArray()
-      self.vara = self.var.getArray()
-
-      # **************************************************************
-      # This part is required to rerun cosmic ray masking on existing images,
-      # i.e. ccd images already with cosmic ray on the weight/mask images.
-      # We need to set the 0s in the inverse variance for the existing
-      # cosmic rays (CRAY) to the median. Notice that CRAY is the "fake" name for
-      # the existing cosmic rays mask plane. The plane with the newly
-      # detected one is called "CR" in the LSST frame work and that is
-      # the one we should use when handlying the cosmic rays detected
-      # with the LSST function.
-      # *** Only need for images with existing CRAY plane ****
-      CRAY     = self.msk.getPlaneBitMask("CRAY") # Gets the value for CR (i.e. 256)
-      cr_prev  = np.where(np.bitwise_and(self.mska, CRAY))
-      NCR_prev = len(cr_prev[0])
-      if NCR_prev > 0:
-         print "# CRs previously found in image -- will be fixed before CR"
-         median_rep            = np.median(self.vara)
-         print "# Fixing weight map with median=%.1f for those %d CR-pixels" % (NCR_prev, median_rep)
-         self.vara[cr_prev]    = median_rep # The LSST handle
-         self.OUT_WGT[cr_prev] = median_rep # The original array
-         print "# Fixing mask plane for those CR-pixels too " 
-         self.mska[cr_prev]    = self.mska[cr_prev]    - 16 # The LSST handle
-         self.OUT_MSK[cr_prev] = self.OUT_MSK[cr_prev] - 16 # The original array
-      # ************************************************************
-      # Make an LSST masked image (science, mask, and weight) 
-      self.mi = afwImage.makeMaskedImage(self.sci, self.msk, self.var)
-
-   def find_CRs(self,**kwargs):
-
-      # Load the the LSST modules here to avoid problems elsewhere in case they are not present
-      import lsst.meas.algorithms as measAlg
-      import lsst.ip.isr          as ip_isr
-      import lsst.afw.math        as afwMath
-      import lsst.pex.config      as pexConfig
-
-      """
-      Find the Cosmic Rays on a Science Image using lsst.meas.algorithms.findCosmicRays
-      """
-      
-      # Estimate the PSF of the science image.
-      if not self.fwhm:
-         print "# Will attempt to get FWHM from the image header"
-         self.fwhm  = get_FWHM(self.ifits,self.sci_hdu)
-         xsize = int(self.fwhm*9)
-         psf   = measAlg.DoubleGaussianPsf(xsize, xsize, self.fwhm/(2*math.sqrt(2*math.log(2))))
-
-      # Interpolate bad pixels before finding CR to avoid false detections
-      fwhm = 2*math.sqrt(2*math.log(psf.computeShape().getDeterminantRadius()))
-      print "# Interpolating BPM/BAD pix mask" 
-      ip_isr.isr.interpolateFromMask(self.mi, fwhm, growFootprints=0, maskName = 'BAD')
-
-      # simple background estimation to use on findCosmicRays
-      background = afwMath.makeStatistics(self.mi.getImage(), afwMath.MEANCLIP).getValue()
-      print "# Setting up background at: %.1f [counts]" %  background
-
-      # Tweak some of the configuration and call FindCosmicRays
-      # More info on lsst/meas/algorithms/findCosmicRaysConfig.py
-      crConfig             = measAlg.FindCosmicRaysConfig()
-      crConfig.minSigma    = self.minSigma
-      crConfig.min_DN      = self.min_DN
-      crConfig.nCrPixelMax = int(self.nx*self.ny/3) # 1e6 will not work, needs an integer
-      if self.interpCR:
-         crConfig.keepCRs  = False # Do interpolate
-         print "# Will erase detected CRs -- interpolate CRs on SCI image"
-      else:
-         crConfig.keepCRs  = True # Do not interpolate -- THIS DOESN'T WORK!!!!!
-         print "# Will keep detected CRs -- no interpolation on SCI image"
-
-      # Now, we do the magic
-      self.crs = measAlg.findCosmicRays(self.mi, psf, background, pexConfig.makePolicy(crConfig))
-
-      # Dilate interpolation working on the mi element
-      if self.dilateCR and self.interpCR:
-         print "# Dilating CR pix mask by %s pixel(s):" % self.nGrowCR
-         ip_isr.isr.interpolateFromMask(self.mi, fwhm, growFootprints=self.nGrowCR, maskName = 'CR')
-
-   def fix_pixels_CR(self):
-
-      """
-      Fix newly interpolated bits and CRs found in the mask and weight
-      images. This need to be done after the CR have been detected.
-      """
-
-      # Extract the CR detected and INTRP pixels
-      CRbit     = self.msk.getPlaneBitMask("CR")    # Gets the value for CR    (2^3=8)
-      INTERPbit = self.msk.getPlaneBitMask("INTRP") # Gets the value for INTRP (2^2=4)
-
-      # Create a boolean selection CR-mask and INTRP from the requested bits
-      masked_interp = (self.mska & INTERPbit) > 0 
-      masked_cr     = (self.mska & CRbit) > 0
-      NCR           = len(masked_cr[masked_cr==True])
-      print "# Detected:   %d CRs in %s " % (len(self.crs),self.fileName)
-      print "# Containing: %d CR-pixels" % NCR
-
-      # 1. The Science 
-      # Put back the CRs in case we don't want to interp
-      # This is a WORK AROUND FOR crConfig.keepCRs option for now
-      if not self.interpCR:
-         self.scia[masked_cr] = self.OUT_SCI[masked_cr] 
-      self.OUT_SCI = self.scia.copy() # This is the output now
-
-      # 2. The Mask
-      self.OUT_MSK[masked_cr]         = 16 | self.OUT_MSK[masked_cr]  
-      if self.interpCR:
-         self.OUT_MSK[masked_interp]  = 4  | self.OUT_MSK[masked_interp]
-
-      # 3. The Weight
-      self.OUT_WGT[masked_cr]       = 0 # PLEASE REVISE
-      self.OUT_WGT[masked_interp]   = 0 # PLEASE REVISE
-
-   def update_hdr_CR(self):
-      """
-      Add records to the header of the fits files
-      """
-      timenow   = time.asctime() # Time stamp for new fits files
-      rec1 = {'name':'DESNCRAY', 'value':len(self.crs),'comment':"Number of Cosmic Rays masked"}
-      rec2 = {'name':'DESDMCR',  'value':timenow,      'comment':"Date DESDM CRs Masked on image"}
-      for h in self.headers:
-         h.add_record(rec1)
-         h.add_record(rec2)
-
-   #### End of  Cosmic Ray rejection routines ######
-
-
-   # *** Streak finder class routines ***
-   def mask_streaks(self,**kwargs):
-      """
-      The primary function for masking streaks in images.
-      Mask streaks from airplanes, satellites, UFOs, etc.
-      by using a Hough transform. 
-      @authors: Eli Rykoff            <rykoff@slac.stanford.edu>
-      @authors: Alex Drlica-Wagner    <kadrlica@fnal.gov>
-      --
-      Made into a callable python class and stand-alone
-      @updates: Felipe Menanteau <felipe@illinois.edu> 
-      --
-      """
-      ####################################################
-      for key in np.intersect1d(self.STREAK_ARGS.keys(),kwargs.keys()):
-         self.__dict__[key] = kwargs[key]
-
-     
-      # Read in the background image nd-array
-      self.BKG    = read_bkg_image(self.bkgfile)
-      
-      # Make a background substracted image
-      self.subIm = self.OUT_SCI - self.BKG
-      # Create a boolean selection mask from the requested bits
-      self.masked = ((self.OUT_MSK & self.maskbits ) > 0)
-      
-      # Re-bin the image (if requested)
-      if self.bin_factor > 1:
-         print "# Binning image by a factor of %s..."% self.bin_factor
-         self.subIm  = bin_pixels(self.subIm,self.bin_factor)
-         self.masked = np.ceil(bin_pixels(self.masked,self.bin_factor)).astype(bool)
+        # Make the individual calls
+        self.make_BAD_mask() # True by default, unless we decide not to.
+        self.make_lsst_image()
+        self.find_CRs()
+        self.fix_pixels_CR()
+        self.update_hdr_CR()
+  
+  
+    def set_DECamMaskPlaneDict(self):
+        """
+        Dictionary to translate from DECam mask plane to LSST definition
+        To see all mask planes:
+              print msk.printMaskPlanes()
+        """
+        self.DECamMaskPlaneDict = dict(
+            BAD       = 0,  # set in bpm (hot/dead pixel/column) (was BPM)
+            SAT       = 1,  # saturated pixel (was SATURATE)
+            INTRP     = 2,  # interpolated pixel (was INTERP)
+            LOW       = 3,  # too little signal- i.e. poor read
+            CRAY      = 4,  # cosmic ray pixel N.b. not CR --- we'll set that ourselves later
+                            # CR is the name used in the LSST framework, and will supersede CRAY!
+            DETECTED  = 5,  # bright star pixel (was STAR)
+            TRAIL     = 6,  # bleed trail pixel
+            EDGEBLEED = 7,  # edge bleed pixel
+            SSXTALK   = 8,  # pixel potentially effected by xtalk from super-saturated source
+            EDGE      = 9,  # pixel flagged to exclude CCD glowing edges
+            STREAK    = 10, # streak 
+            FIX       = 11, # a bad pixel that was fixed
+            )
+  
+  
+    def make_BAD_mask(self):
+        """
+        Create a specific boolean masks to temporaryly deal with BPM
+        interpolation Mask for the BAD pixels mask, this won't be
+        requited if all of the BPM are masked by imdetrend in the
+        future. It assumes the following bit from the maskbit plane:
          
-      # Calculate sky noise
-      print "# Measuring sky noise..."
-      usepix = np.where(~self.masked)
-      self.sky_bkg, self.sky_err, self.sky_skew = mmm(self.subIm[usepix])
-      
-      # allow objects to be connected diagonally, create the structure
-      self.structure = ndimage.generate_binary_structure(2,2)
-      
-      # The thresholded image to pass to the Hough transform
-      self.searchIm = ( (self.subIm > self.nsig_sky*self.sky_err) & ~self.masked )
-      
-      # Should do a maxarea cut here...
-      print "# Performing Hough transform now..."
-      self.hough, self.theta, self.rho = Hough(self.searchIm).transform()
-      
-      # Read in the Hough template or create one
-      self.read_Hough_template()
-      
-      # Normalize the transform in terms of sigma
-      norm  = fit_array_template(self.hough,self.template)
-      mean  = norm*self.template
-      sigma = np.sqrt(norm*self.template)
-      self.trans = np.zeros(self.hough.shape)
-      idx = np.nonzero(sigma)
-      self.trans[idx] = (self.hough[idx] - mean[idx]) / sigma[idx]
-      #self.trans = np.nan_to_num( (self.hough - mean) / sigma )
-      print "# Maximum Hough value: %s" % self.trans.max()
-
-      # Perform detection using structure and label
-      self.detect_label,self.detect_nlabel = ndimage.label(self.trans > self.nsig_detect, structure=self.structure)
-      if self.detect_nlabel:
-         hist,edges,rev = idl_histogram(self.detect_label,bins=np.arange(self.detect_nlabel+2))
-         maxarea = int(0.1*self.detect_label.size) # Get rid of background object
-         good, = np.where((hist > 1) & (hist < maxarea))
-         #good, = np.where( (hist > 1) )
-         print "# Detected %i streaks above a threshold of %s"%(len(good),self.nsig_detect)
-      else:
-         print "# No streaks detected."
-         rev,good = [],[]
-
-      # Detection statistics
-      print "# Calculating detection statistics..."
-      self.detect_objs = streak_statistics(self.trans, self.rho, self.theta, good, rev)
-      self.detect_objs['BINNING'][:] = self.bin_factor
-      
-      # Make some preliminary quality cuts
-      cut = np.zeros(len(self.detect_objs),dtype=self.detect_objs['CUT'].dtype)
-      # Perpendicular objects that look like a readout error...
-      cut |= (np.abs(self.detect_objs['SLOPE']) > 150) & (self.detect_objs['WIDTH'] <= 3)
-      # Some additional cuts that could be useful -- future
-      #cut |= ... # Central bias jump (x-dir)
-      #cut |= ... # Central bias jump (y-dir)
-      self.detect_objs['CUT'][np.nonzero(cut)] = 1
-      print "# Found %i lines passing quality cuts" % (self.detect_objs['CUT']==0).sum()
-    
-      # Merge nearby lines
-      merge_label,merge_nlabel = ndimage.label(self.trans > self.nsig_merge,structure=self.structure)
-      if merge_nlabel:
-         hist,edges,rev = idl_histogram(merge_label,bins=np.arange(merge_nlabel+2))
-         good = []
-         for obj in self.detect_objs[self.detect_objs['CUT']==0]:
-            lab = merge_label[obj['MAX_Y0'],obj['MAX_X0']]
-            good.append(lab)
-         unique = np.unique(good)
-         nmerged = len(good) - len(unique)
-         print "# Merging %i streaks above a threshold of %s"%(nmerged,self.nsig_merge)
-      else:
-         print "# No objects found for merging."
-         rev,unique = [],[]
-    
-      print "# Calculating merging statistics..."
-      merge_objs = streak_statistics(self.trans, self.rho, self.theta, unique, rev)
-      merge_objs['BINNING'][:] = self.bin_factor
-    
-      # More quality cuts
-      cut = np.zeros(len(merge_objs),dtype=merge_objs['CUT'].dtype)
-      # Objects that are too wide...
-      cut |= (merge_objs['WIDTH'] > self.max_width/float(self.bin_factor))
-      # Objects that span too large an opening angle -- to curvy
-      delta_theta = np.abs(self.theta[merge_objs['XMAX']] - self.theta[merge_objs['XMIN']])
-      cut |= delta_theta > np.radians(self.max_angle)
-      
-      merge_objs['CUT'][np.nonzero(cut)] = 1
-      print "# Found %i streaks passing quality cuts"%((merge_objs['CUT']==0).sum())
-      
-      # Masking threshold
-      self.mask_label,mask_nlabel = ndimage.label(self.trans > self.nsig_mask,structure=self.structure)
-      if mask_nlabel:
-         hist,edges,rev = idl_histogram(self.mask_label,bins=np.arange(mask_nlabel+2))
-         good = []
+            BADbit    = 1
+            INTERPbit = 4
+            EDGEbit   = 512
+        """
          
-         for obj in merge_objs[merge_objs['CUT']==0]:
-            lab = self.mask_label[obj['MAX_Y0'],obj['MAX_X0']]
-            good.append(lab)
-
-         unique = np.unique(good)
-         nmerged = len(good) - len(unique)
-         if nmerged: 
-            print "# Merging %i additional streaks"%(nmerged)
-      else:
-         print "# No objects found for masking."
-         rev,unique = [],[]
-    
-      print "# Calculating masking statistics..."
-      self.mask_objs = streak_statistics(self.trans, self.rho, self.theta, unique, rev)
-      self.mask_objs['BINNING'][:] = self.bin_factor
-      
-      # Create the mask from the streaks
-      print "# Masking %i streaks"%(len(self.mask_objs))
-      streak_mask = np.zeros(self.OUT_MSK.shape,dtype=self.OUT_MSK.dtype)
-      wcs = esutil.wcsutil.WCS(self.h_sci)
-      for i,obj in enumerate(self.mask_objs):
-         slope  = obj['SLOPE']
-         inter1 = obj['INTER1']
-         inter2 = obj['INTER2']
-         # Print intercept in original image coordinates
-         print "#  %i   NSIG=%g, SLOPE=%g, INTER1=%g, INTER2=%g"%(i,obj['MAX'],slope,inter1*self.bin_factor,inter2*self.bin_factor)
-
-         tmp_mask = np.zeros(self.searchIm.shape,dtype=self.OUT_MSK.dtype)
-         tmp_mask = mask_between(tmp_mask,slope,inter1,inter2,self.mask_factor)
-
-         clip = np.abs(np.abs(np.degrees(np.arctan(slope)))-self.clip_angle) < self.clip_delta
-         if self.clip_mask and clip:
-            print "# Examining streak for clipping..."
-            tmp_mask = clip_mask(self.searchIm,self.masked,tmp_mask,slope,self.nsig_clip)
-
-         # Move to original resolution
-         tmp_mask = tmp_mask.repeat(self.bin_factor,axis=0).repeat(self.bin_factor,axis=1)
-         # Smooth binning artifacts
-         vertices = create_rectangle(tmp_mask,slope)
-         obj['CORNERS'][:] = vertices
-
-         #vertices_wcs = np.vstack(self.image_to_wcs(vertices[:,0],vertices[:,1])).T 
-         vertices_wcs = np.vstack(wcs.image2sky(vertices[:,0],vertices[:,1])).T
-         obj['CORNERS_WCS'][:] = vertices_wcs
-
-         # Move to the full resolution mask
-         streak_mask |= mask_polygon(streak_mask,vertices)
+        print "# Creating BAD/BPM pixel mask for interpolation"
+        # Mask for BAD=1 pixels that have been already interpolated
+        # (INTERP=4), and keep the original values for later.  It is
+        # important to note that we modify only the MSK ndarray, which
+        # is the one used by the LSST framework. The original,
+        # unmodified values are keept in the copy for output OUT_MSK.
+        masked_bad        = (self.MSK & 1) > 0
+        masked_bad_interp = ((self.MSK & 4) > 0) & masked_bad
          
-         #streak_mask |= mask_between(streak_mask,slope,inter1*self.bin_factor,inter2*self.bin_factor,self.mask_factor)
+        # Create a boolean mask of the glowing edges, we don't need to
+        # keep the original values for later, as they are kept in the OUT_MSK copy.
+        masked_edge = (self.MSK & 512) > 0
+         
+        # Temporaly change values of 513 to 512 in order to avoid
+        # interpolating over glowing edges of ccds also labeled as BAD (512+1=513)
+        self.MSK[masked_edge] = 512
+         
+        # Temporaryly change the values of BAD and INTERP pixels from 5
+        # to 4 for the MSK ndarray as we do not want to interpolate twice.
+        self.MSK[masked_bad_interp] = 4
+  
+  
+    def make_lsst_image(self):
+        import lsst.afw.image  as afwImage
 
-      ypix,xpix = np.nonzero(streak_mask)
-    
-      # set the streak bit
-      self.OUT_MSK[ypix,xpix] = self.OUT_MSK[ypix,xpix] | self.setbit 
-      # and zero out the weight
-      self.OUT_WGT[ypix,xpix] = 0
-
-      # Draw Plots
-      if self.draw:
-         self.drawPlots()
+        """
+        Create and LSST-like image from the SCI, MSK and WGT
+        ndarrays. We pass them into the LSST framework structure to call
+        the CR finder.
+        """
+  
+        print "# Making LSST image structure from SCI, MSK and VAR"
+        # 0 Set up the Mask Plane dictionay for DECam
+        self.set_DECamMaskPlaneDict()
+        # 1 - Science
+        self.sci = afwImage.ImageF(self.SCI)
+        # 2- The Mask plane Image and rewrite mask planes into LSST convention
+        self.msk = afwImage.MaskU(self.MSK)
+        self.msk.conformMaskPlanes(self.DECamMaskPlaneDict) 
+         
+        # 3 - The variance Image
+        self.WGT_fixed = np.where(self.WGT<=0, self.WGT.max()/1e6, self.WGT) # Fix values < 0
+        self.VAR = 1/self.WGT_fixed
+        self.var = afwImage.ImageF(self.VAR)
+        # Into numpy-arrays to handle some numpy fast operations
+        self.scia = self.sci.getArray()
+        self.mska = self.msk.getArray()
+        self.vara = self.var.getArray()
+         
+        # **************************************************************
+        # This part is required to rerun cosmic ray masking on existing images,
+        # i.e. ccd images already with cosmic ray on the weight/mask images.
+        # We need to set the 0s in the inverse variance for the existing
+        # cosmic rays (CRAY) to the median. Notice that CRAY is the "fake" name for
+        # the existing cosmic rays mask plane. The plane with the newly
+        # detected one is called "CR" in the LSST frame work and that is
+        # the one we should use when handlying the cosmic rays detected
+        # with the LSST function.
+        # *** Only need for images with existing CRAY plane ****
+        CRAY     = self.msk.getPlaneBitMask("CRAY") # Gets the value for CR (i.e. 256)
+        cr_prev  = np.where(np.bitwise_and(self.mska, CRAY))
+        NCR_prev = len(cr_prev[0])
+        if NCR_prev > 0:
+            print "# CRs previously found in image -- will be fixed before CR"
+            median_rep            = np.median(self.vara)
+            print "# Fixing weight map with median=%.1f for those %d CR-pixels"%(NCR_prev, median_rep)
+            self.vara[cr_prev]    = median_rep # The LSST handle
+            self.OUT_WGT[cr_prev] = median_rep # The original array
+            print "# Fixing mask plane for those CR-pixels too " 
+            self.mska[cr_prev]    = self.mska[cr_prev]    - 16 # The LSST handle
+            self.OUT_MSK[cr_prev] = self.OUT_MSK[cr_prev] - 16 # The original array
+        # ************************************************************
+        # Make an LSST masked image (science, mask, and weight) 
+        self.mi = afwImage.makeMaskedImage(self.sci, self.msk, self.var)
+  
+    def find_CRs(self,**kwargs):
+        # Load the the LSST modules here to avoid problems elsewhere in case they are not present
+        import lsst.meas.algorithms as measAlg
+        import lsst.ip.isr          as ip_isr
+        import lsst.afw.math        as afwMath
+        import lsst.pex.config      as pexConfig
+         
+        """
+        Find the Cosmic Rays on a Science Image using lsst.meas.algorithms.findCosmicRays
+        """
+         
+        # Estimate the PSF of the science image.
+        if not self.fwhm:
+            print "# Will attempt to get FWHM from the image header"
+            self.fwhm  = get_FWHM(self.ifits,self.sci_hdu)
+            xsize = int(self.fwhm*9)
+            psf   = measAlg.DoubleGaussianPsf(xsize, xsize, self.fwhm/(2*math.sqrt(2*math.log(2))))
+         
+        # Interpolate bad pixels before finding CR to avoid false detections
+        fwhm = 2*math.sqrt(2*math.log(psf.computeShape().getDeterminantRadius()))
+        print "# Interpolating BPM/BAD pix mask" 
+        ip_isr.isr.interpolateFromMask(self.mi, fwhm, growFootprints=0, maskName = 'BAD')
+         
+        # simple background estimation to use on findCosmicRays
+        background = afwMath.makeStatistics(self.mi.getImage(), afwMath.MEANCLIP).getValue()
+        print "# Setting up background at: %.1f [counts]" %  background
+         
+        # Tweak some of the configuration and call FindCosmicRays
+        # More info on lsst/meas/algorithms/findCosmicRaysConfig.py
+        crConfig             = measAlg.FindCosmicRaysConfig()
+        crConfig.minSigma    = self.minSigma
+        crConfig.min_DN      = self.min_DN
+        crConfig.nCrPixelMax = int(self.nx*self.ny/3) # 1e6 will not work, needs an integer
+        if self.interpCR:
+            crConfig.keepCRs  = False # Do interpolate
+            print "# Will erase detected CRs -- interpolate CRs on SCI image"
+        else:
+            crConfig.keepCRs  = True # Do not interpolate -- THIS DOESN'T WORK!!!!!
+            print "# Will keep detected CRs -- no interpolation on SCI image"
+         
+        # Now, we do the magic
+        self.crs = measAlg.findCosmicRays(self.mi, psf, background, pexConfig.makePolicy(crConfig))
+         
+        # Dilate interpolation working on the mi element
+        if self.dilateCR and self.interpCR:
+            print "# Dilating CR pix mask by %s pixel(s):" % self.nGrowCR
+            ip_isr.isr.interpolateFromMask(self.mi, fwhm, growFootprints=self.nGrowCR, maskName = 'CR')
+  
+    def fix_pixels_CR(self):
+        """
+        Fix newly interpolated bits and CRs found in the mask and weight
+        images. This need to be done after the CR have been detected.
+        """
+         
+        # Extract the CR detected and INTRP pixels
+        CRbit     = self.msk.getPlaneBitMask("CR")    # Gets the value for CR    (2^3=8)
+        INTERPbit = self.msk.getPlaneBitMask("INTRP") # Gets the value for INTRP (2^2=4)
+         
+        # Create a boolean selection CR-mask and INTRP from the requested bits
+        masked_interp = (self.mska & INTERPbit) > 0 
+        masked_cr     = (self.mska & CRbit) > 0
+        NCR           = len(masked_cr[masked_cr==True])
+        print "# Detected:   %d CRs in %s " % (len(self.crs),self.fileName)
+        print "# Containing: %d CR-pixels" % NCR
+         
+        # 1. The Science 
+        # Put back the CRs in case we don't want to interp
+        # This is a WORK AROUND FOR crConfig.keepCRs option for now
+        if not self.interpCR:
+            self.scia[masked_cr] = self.OUT_SCI[masked_cr] 
+        self.OUT_SCI = self.scia.copy() # This is the output now
+         
+        # 2. The Mask
+        self.OUT_MSK[masked_cr]         = 16 | self.OUT_MSK[masked_cr]  
+        if self.interpCR:
+            self.OUT_MSK[masked_interp]  = 4  | self.OUT_MSK[masked_interp]
+         
+        # 3. The Weight
+        self.OUT_WGT[masked_cr]       = 0 # PLEASE REVISE
+        self.OUT_WGT[masked_interp]   = 0 # PLEASE REVISE
+  
+    def update_hdr_CR(self):
+        """
+        Add records to the header of the fits files
+        """
+        timenow   = time.asctime() # Time stamp for new fits files
+        rec1 = {'name':'DESNCRAY', 'value':len(self.crs),'comment':"Number of Cosmic Rays masked"}
+        rec2 = {'name':'DESDMCR',  'value':timenow,      'comment':"Date DESDM CRs Masked on image"}
+        for h in self.headers:
+            h.add_record(rec1)
+            h.add_record(rec2)
+  
+    #### End of  Cosmic Ray rejection routines ######
+  
+  
+    # *** Streak finder class routines ***
+    def mask_streaks(self,**kwargs):
+        """
+        The primary function for masking streaks in images.
+        Mask streaks from airplanes, satellites, UFOs, etc.
+        by using a Hough transform. 
+        @authors: Eli Rykoff            <rykoff@slac.stanford.edu>
+        @authors: Alex Drlica-Wagner    <kadrlica@fnal.gov>
+        --
+        Made into a callable python class and stand-alone
+        @updates: Felipe Menanteau <felipe@illinois.edu> 
+        --
+        """
+        ####################################################
+        for key in np.intersect1d(self.STREAK_ARGS.keys(),kwargs.keys()):
+            self.__dict__[key] = kwargs[key]
+         
+        # Read in the background image nd-array
+        self.BKG    = read_bkg_image(self.bkgfile)
+         
+        # Make a background substracted image
+        self.subIm = self.OUT_SCI - self.BKG
+        # Create a boolean selection mask from the requested bits
+        self.masked = ((self.OUT_MSK & self.maskbits ) > 0)
+         
+        # Re-bin the image (if requested)
+        if self.bin_factor > 1:
+            print "# Binning image by a factor of %s..."% self.bin_factor
+            self.subIm  = bin_pixels(self.subIm,self.bin_factor)
+            self.masked = np.ceil(bin_pixels(self.masked,self.bin_factor)).astype(bool)
+           
+        # Calculate sky noise
+        print "# Measuring sky noise..."
+        usepix = np.where(~self.masked)
+        self.sky_bkg, self.sky_err, self.sky_skew = mmm(self.subIm[usepix])
+         
+        # allow objects to be connected diagonally, create the structure
+        self.structure = ndimage.generate_binary_structure(2,2)
+         
+        # The thresholded image to pass to the Hough transform
+        self.searchIm = ( (self.subIm > self.nsig_sky*self.sky_err) & ~self.masked )
+         
+        # Should do a maxarea cut here...
+        print "# Performing Hough transform now..."
+        self.hough, self.theta, self.rho = Hough(self.searchIm).transform()
+         
+        # Read in the Hough template or create one
+        self.read_Hough_template()
+         
+        # Normalize the transform in terms of sigma
+        norm  = fit_array_template(self.hough,self.template)
+        mean  = norm*self.template
+        sigma = np.sqrt(norm*self.template)
+        self.trans = np.zeros(self.hough.shape)
+        idx = np.nonzero(sigma)
+        self.trans[idx] = (self.hough[idx] - mean[idx]) / sigma[idx]
+        #self.trans = np.nan_to_num( (self.hough - mean) / sigma )
+        print "# Maximum Hough value: %s" % self.trans.max()
+         
+        # Perform detection using structure and label
+        self.detect_label,self.detect_nlabel = ndimage.label(self.trans > self.nsig_detect, structure=self.structure)
+        if self.detect_nlabel:
+            hist,edges,rev = idl_histogram(self.detect_label,bins=np.arange(self.detect_nlabel+2))
+            maxarea = int(0.1*self.detect_label.size) # Get rid of background object
+            good, = np.where((hist > 1) & (hist < maxarea))
+            #good, = np.where( (hist > 1) )
+            print "# Detected %i streaks above a threshold of %s"%(len(good),self.nsig_detect)
+        else:
+            print "# No streaks detected."
+            rev,good = [],[]
+         
+        # Detection statistics
+        print "# Calculating detection statistics..."
+        self.detect_objs = streak_statistics(self.trans, self.rho, self.theta, good, rev)
+        self.detect_objs['BINNING'][:] = self.bin_factor
+         
+        # Make some preliminary quality cuts
+        cut = np.zeros(len(self.detect_objs),dtype=self.detect_objs['CUT'].dtype)
+        # Perpendicular objects that look like a readout error...
+        cut |= (np.abs(self.detect_objs['SLOPE']) > 150) & (self.detect_objs['WIDTH'] <= 3)
+        # Some additional cuts that could be useful -- future
+        #cut |= ... # Central bias jump (x-dir)
+        #cut |= ... # Central bias jump (y-dir)
+        self.detect_objs['CUT'][np.nonzero(cut)] = 1
+        print "# Found %i lines passing quality cuts" % (self.detect_objs['CUT']==0).sum()
+         
+        # Merge nearby lines
+        merge_label,merge_nlabel = ndimage.label(self.trans > self.nsig_merge,structure=self.structure)
+        if merge_nlabel:
+            hist,edges,rev = idl_histogram(merge_label,bins=np.arange(merge_nlabel+2))
+            good = []
+            for obj in self.detect_objs[self.detect_objs['CUT']==0]:
+                lab = merge_label[obj['MAX_Y0'],obj['MAX_X0']]
+                good.append(lab)
+            unique = np.unique(good)
+            nmerged = len(good) - len(unique)
+            print "# Merging %i streaks above a threshold of %s"%(nmerged,self.nsig_merge)
+        else:
+            print "# No objects found for merging."
+            rev,unique = [],[]
+         
+        print "# Calculating merging statistics..."
+        merge_objs = streak_statistics(self.trans, self.rho, self.theta, unique, rev)
+        merge_objs['BINNING'][:] = self.bin_factor
+         
+        # More quality cuts
+        cut = np.zeros(len(merge_objs),dtype=merge_objs['CUT'].dtype)
+        # Objects that are too wide...
+        cut |= (merge_objs['WIDTH'] > self.max_width/float(self.bin_factor))
+        # Objects that span too large an opening angle -- to curvy
+        delta_theta = np.abs(self.theta[merge_objs['XMAX']] - self.theta[merge_objs['XMIN']])
+        cut |= delta_theta > np.radians(self.max_angle)
+         
+        merge_objs['CUT'][np.nonzero(cut)] = 1
+        print "# Found %i streaks passing quality cuts"%((merge_objs['CUT']==0).sum())
+         
+        # Masking threshold
+        self.mask_label,mask_nlabel = ndimage.label(self.trans > self.nsig_mask,structure=self.structure)
+        if mask_nlabel:
+            hist,edges,rev = idl_histogram(self.mask_label,bins=np.arange(mask_nlabel+2))
+            good = []
             
-   def read_Hough_template(self):
-
-      """
-      Read in the Hough template from file of binned image shape
-      """
-      template_file = "hough_template_x%i_y%i.npy" % self.searchIm.shape[::-1]
-      filename = os.path.join(self.template_dir,template_file)
-      if os.path.exists(filename):
-         print "# Reading template from %s" % filename
-         self.template = read_template(filename)[0]
-      else:
-         print "# No template Found --> calculating Hough normalization..."
-         template_image = (np.ones(self.searchIm.shape,dtype=bool) & ~self.masked)
-         self.template = Hough(template_image).transform()[0]
-
-   def drawPlots(self):
-      """
-      Draw the streak finder dignostic plot with matplotlib
-      """
-      import pylab as plt
-
-      # Get the drawbase name
-      baseName      = os.path.basename(self.fileName)
-      #outBasename   = os.path.splitext(baseName)[0]
-      outBasename   = baseName.split('.fit')[0]
-      drawbase = os.path.join(self.outdir,outBasename)
-      
-      # The sky noise
-      pngfile = "%s_sky.png" % drawbase
-      print "# Drawing sky noise: %s " % pngfile
-      fig, axes = plt.subplots(1, 3)
-      sigma     = [1,2,3]
-      for ax,sig in zip(axes,sigma):
-         label = ndimage.label(((self.subIm>sig*self.sky_err) & ~self.masked),structure=self.structure)
-         ax.imshow(label[0]>0,origin='bottom'); 
-         ax.set_title(r"Sky Noise ($%s\sigma$)"%sig); 
-      plt.savefig(pngfile)
-    
-      # Draw the input mask
-      pngfile = "%s_bits.png" % drawbase
-      print "# Drawing input mask: %s " % pngfile
-      fig, axes = plt.subplots(1, 3)
-      axes[0].imshow(self.subIm > self.nsig_sky*self.sky_err,origin='bottom')
-      axes[0].set_title("Threshold Image")
-      axes[1].imshow(self.masked,origin='bottom')
-      axes[1].set_title("Input Mask")
-      axes[2].imshow(self.searchIm,origin='bottom')
-      axes[2].set_title(r"Search Image")
-      plt.savefig(pngfile)
-
-      # Draw the lines and masks
-      pngfile = "%s_mask.png" % drawbase
-      print "# Drawing streaks and masks: %s" % pngfile
-      ymax,xmax = self.searchIm.shape; x = np.arange(xmax)
-      fig, axes = plt.subplots(1, 3)
-      titles = ["Sky Noise","Streaks","Mask"]
-      for ax,t in zip(axes,titles):
-         ax.imshow(self.searchIm,origin='bottom'); ax.set_title(t)
-      plt.sca(axes[1])
-      for obj in self.mask_objs:
-         y1 = obj['SLOPE']*x+obj['INTER1']; plt.plot(x,y1,'--w')
-         y2 = obj['SLOPE']*x+obj['INTER2']; plt.plot(x,y2,'--w')
-      if (self.OUT_MSK & self.setbit).sum():
-         plt.sca(axes[2]) 
-         bin_mask = bin_pixels(self.OUT_MSK & self.setbit,self.bin_factor).astype(bool)
-         bin_mask = np.ma.array(bin_mask,mask=(bin_mask==0))
-         cmap = matplotlib.cm.binary; cmap.set_bad('k',0)
-         plt.imshow(bin_mask,origin='bottom',alpha=0.5,cmap=cmap)
-      for ax in axes: ax.set_xlim(0,xmax); ax.set_ylim(0,ymax)
-      plt.savefig(pngfile)
-
-      #  Draw Hough transform at various thresholds
-      pngfile = "%s_hough.png" % drawbase
-      print "# Drawing Hough transform: %s" % pngfile
-      fig, axes = plt.subplots(2,2,figsize=(12,6),sharey='all',sharex='all')
-      axes = axes.flatten()
-      extent = [self.theta.min(),self.theta.max(),self.rho.min(),self.rho.max()]
-      titles = ["Hough","Normalized",
-                r'Detect $(%g \sigma)$'% self.nsig_detect,
-                r"Mask $(%g \sigma)$"  % self.nsig_mask]
-      data   = [self.hough,self.trans,self.detect_label,self.mask_label]
-      cmap = matplotlib.cm.jet; cmap.set_bad('w',0)
-      for ax,d,t in zip(axes,data,titles):
-         #d = np.ma.masked_array(d,mask=~(d>0))
-         ax.imshow(d,extent=extent,aspect='auto',cmap=cmap,vmin=0)
-         ax.set_title(t)
-      axes[0].set_ylabel(r'Distance (pix)'); 
-      axes[2].set_ylabel(r'Distance (pix)'); 
-      axes[2].set_xlabel(r'Angle (rad)')
-      axes[3].set_xlabel(r'Angle (rad)')
-      plt.savefig(pngfile)
-
-    # *** END of Streak finder class routines ***
-
-   def get_outName(self):
-
-      """
-      Set up the output name based on the input filename
-      """
-      # Get extension and basename
-      baseName = os.path.basename(self.fileName)
-      extName  = os.path.splitext(baseName)[1]
-
-      # Check whether this is 'fits.fz' or 'fits' files and get the name
-      if extName == '.fz':
-         outBasename = "%s"      % os.path.splitext(baseName)[0]
-      elif extName == '.fits':
-         outBasename = "%s.fits" % os.path.splitext(baseName)[0]
-      else:
-         sys.exit("ERROR: Unknown file type extension for %s" % self.fileName)
-
-      # Decide if we want to compress the output, default is not to.
-      if self.compress:
-         outName = "%s.fz" % os.path.join(self.outdir,outBasename)
-      else:
-         outName = "%s"    % os.path.join(self.outdir,outBasename)
+            for obj in merge_objs[merge_objs['CUT']==0]:
+                lab = self.mask_label[obj['MAX_Y0'],obj['MAX_X0']]
+                good.append(lab)
+          
+            unique = np.unique(good)
+            nmerged = len(good) - len(unique)
+            if nmerged: 
+                print "# Merging %i additional streaks"%(nmerged)
+        else:
+           print "# No objects found for masking."
+           rev,unique = [],[]
          
-      self.outName     = outName
-      self.outBasename = outBasename
+        print "# Calculating masking statistics..."
+        self.mask_objs = streak_statistics(self.trans, self.rho, self.theta, unique, rev)
+        self.mask_objs['BINNING'][:] = self.bin_factor
          
-   def write(self,**kwargs):
-      """
-      Use fitsio to write the output file compressed or not
-      """
-      
-      # Decide if compress, that will define the fileName, compression type and tile_dims
-      self.compress  = kwargs.get('compress',None)
-      # Define type of compresion and tile_dims
-      if self.compress:
-         self.compress  = 'RICE'
-         self.tile_dims = [1,2048]
-      else:
-         self.compress  = None
-         self.tile_dims = None
-
-      # Get the outputname self.outName
-      self.get_outName()
-      # Write the output file, one HDU at a time
-      ofits = fitsio.FITS(self.outName,'rw',clobber=True)
-      # Science -- use scia -- ndarray representation
-      ofits.write(self.OUT_SCI,header=self.h_sci,compress=self.compress,tile_dims=self.tile_dims)
-      # The Mask
-      ofits.write(self.OUT_MSK,header=self.h_msk,compress=self.compress,tile_dims=self.tile_dims)
-      # The Weight
-      ofits.write(self.OUT_WGT,header=self.h_wgt,compress=self.compress,tile_dims=self.tile_dims)
-      # Close the file
-      ofits.close()
-      print >>sys.stderr,"# Wrote: %s" % self.outName
-
-   def write_streak_objects(self):
-      self.get_outName()
-      outname =self.outName.split('.fit')[0] + '_objs.fits'
-      #logger.info("Writing objects: %s" % (objsfile))
-      print "# Writing objects: %s" % (outname)
-      fitsio.write(outname,self.mask_objs,clobber=True)
-
-   def write_streak_mask(self):
-      self.get_outName()
-      outname =self.outName.split('.fit')[0] + '_mask.fits'
-      print "# Writing mask: %s" % (outname)
-      
-      maskonly = np.zeros(self.OUT_MSK.shape,dtype=self.OUT_MSK.dtype)
-      test = np.where((self.OUT_MSK & self.setbit) > 0)
-      maskonly[test[0],test[1]] = self.setbit
-
-      # Write mask as float32 so that "ds9 -mask" reads properly
-      header = copy.copy(self.h_msk)
-      header['BZERO'] = 0 
-      fitsio.write(outname,maskonly.astype('f4'),header=header,clobber=True)
+        # Create the mask from the streaks
+        print "# Masking %i streaks"%(len(self.mask_objs))
+        streak_mask = np.zeros(self.OUT_MSK.shape,dtype=self.OUT_MSK.dtype)
+        wcs = esutil.wcsutil.WCS(self.h_sci)
+        for i,obj in enumerate(self.mask_objs):
+            slope  = obj['SLOPE']
+            inter1 = obj['INTER1']
+            inter2 = obj['INTER2']
+            # Print intercept in original image coordinates
+            print "#  %i   NSIG=%g, SLOPE=%g, INTER1=%g, INTER2=%g"%(i,obj['MAX'],slope,inter1*self.bin_factor,inter2*self.bin_factor)
+          
+            tmp_mask = np.zeros(self.searchIm.shape,dtype=self.OUT_MSK.dtype)
+            tmp_mask = mask_between(tmp_mask,slope,inter1,inter2,self.mask_factor)
+          
+            clip = np.abs(np.abs(np.degrees(np.arctan(slope)))-self.clip_angle) < self.clip_range
+            if self.clip and clip:
+                print "# Examining streak for clipping..."
+                tmp_mask = clip_mask(self.searchIm,self.masked,tmp_mask,slope,self.nsig_clip)
+          
+            # Move to original resolution
+            tmp_mask = tmp_mask.repeat(self.bin_factor,axis=0).repeat(self.bin_factor,axis=1)
+            # Smooth binning artifacts
+            vertices = create_rectangle(tmp_mask,slope)
+            obj['CORNERS'][:] = vertices
+          
+            #vertices_wcs = np.vstack(self.image_to_wcs(vertices[:,0],vertices[:,1])).T 
+            vertices_wcs = np.vstack(wcs.image2sky(vertices[:,0],vertices[:,1])).T
+            obj['CORNERS_WCS'][:] = vertices_wcs
+          
+            # Move to the full resolution mask
+            streak_mask |= mask_polygon(streak_mask,vertices)
+            
+            #streak_mask |= mask_between(streak_mask,slope,inter1*self.bin_factor,inter2*self.bin_factor,self.mask_factor)
+         
+        ypix,xpix = np.nonzero(streak_mask)
+         
+        # set the streak bit
+        self.OUT_MSK[ypix,xpix] = self.OUT_MSK[ypix,xpix] | self.setbit 
+        # and zero out the weight
+        self.OUT_WGT[ypix,xpix] = 0
+         
+        # Draw Plots
+        if self.draw: self.drawPlots()
+             
+    def read_Hough_template(self):
+        """
+        Read in the Hough template from file of binned image shape
+        """
+        template_file = "hough_template_x%i_y%i.npy" % self.searchIm.shape[::-1]
+        filename = os.path.join(self.template_dir,template_file)
+        if os.path.exists(filename):
+            print "# Reading template from %s" % filename
+            self.template = read_template(filename)[0]
+        else:
+            print "# No template Found --> calculating Hough normalization..."
+            template_image = (np.ones(self.searchIm.shape,dtype=bool) & ~self.masked)
+            self.template = Hough(template_image).transform()[0]
+  
+    def drawPlots(self):
+        """
+        Draw the streak finder dignostic plot with matplotlib
+        """
+        import pylab as plt
+         
+        # Get the drawbase name
+        baseName      = os.path.basename(self.fileName)
+        #outBasename   = os.path.splitext(baseName)[0]
+        outBasename   = baseName.split('.fit')[0]
+        drawbase = os.path.join(self.outdir,outBasename)
+         
+        # The sky noise
+        pngfile = "%s_sky.png" % drawbase
+        print "# Drawing sky noise: %s " % pngfile
+        fig, axes = plt.subplots(1, 3)
+        sigma     = [1,2,3]
+        for ax,sig in zip(axes,sigma):
+            label = ndimage.label(((self.subIm>sig*self.sky_err) & ~self.masked),structure=self.structure)
+            ax.imshow(label[0]>0,origin='bottom'); 
+            ax.set_title(r"Sky Noise ($%s\sigma$)"%sig); 
+        plt.savefig(pngfile)
+         
+        # Draw the input mask
+        pngfile = "%s_bits.png" % drawbase
+        print "# Drawing input mask: %s " % pngfile
+        fig, axes = plt.subplots(1, 3)
+        axes[0].imshow(self.subIm > self.nsig_sky*self.sky_err,origin='bottom')
+        axes[0].set_title("Threshold Image")
+        axes[1].imshow(self.masked,origin='bottom')
+        axes[1].set_title("Input Mask")
+        axes[2].imshow(self.searchIm,origin='bottom')
+        axes[2].set_title(r"Search Image")
+        plt.savefig(pngfile)
+         
+        # Draw the lines and masks
+        pngfile = "%s_mask.png" % drawbase
+        print "# Drawing streaks and masks: %s" % pngfile
+        ymax,xmax = self.searchIm.shape; x = np.arange(xmax)
+        fig, axes = plt.subplots(1, 3)
+        titles = ["Sky Noise","Streaks","Mask"]
+        for ax,t in zip(axes,titles):
+            ax.imshow(self.searchIm,origin='bottom'); ax.set_title(t)
+        plt.sca(axes[1])
+        for obj in self.mask_objs:
+            y1 = obj['SLOPE']*x+obj['INTER1']; plt.plot(x,y1,'--w')
+            y2 = obj['SLOPE']*x+obj['INTER2']; plt.plot(x,y2,'--w')
+        if (self.OUT_MSK & self.setbit).sum():
+            plt.sca(axes[2]) 
+            bin_mask = bin_pixels(self.OUT_MSK & self.setbit,self.bin_factor).astype(bool)
+            bin_mask = np.ma.array(bin_mask,mask=(bin_mask==0))
+            cmap = matplotlib.cm.binary; cmap.set_bad('k',0)
+            plt.imshow(bin_mask,origin='bottom',alpha=0.5,cmap=cmap)
+        for ax in axes: ax.set_xlim(0,xmax); ax.set_ylim(0,ymax)
+        plt.savefig(pngfile)
+         
+        #  Draw Hough transform at various thresholds
+        pngfile = "%s_hough.png" % drawbase
+        print "# Drawing Hough transform: %s" % pngfile
+        fig, axes = plt.subplots(2,2,figsize=(12,6),sharey='all',sharex='all')
+        axes = axes.flatten()
+        extent = [self.theta.min(),self.theta.max(),self.rho.min(),self.rho.max()]
+        titles = ["Hough","Normalized",
+                  r'Detect $(%g \sigma)$'% self.nsig_detect,
+                  r"Mask $(%g \sigma)$"  % self.nsig_mask]
+        data   = [self.hough,self.trans,self.detect_label,self.mask_label]
+        cmap = matplotlib.cm.jet; cmap.set_bad('w',0)
+        for ax,d,t in zip(axes,data,titles):
+            #d = np.ma.masked_array(d,mask=~(d>0))
+            ax.imshow(d,extent=extent,aspect='auto',cmap=cmap,vmin=0)
+            ax.set_title(t)
+        axes[0].set_ylabel(r'Distance (pix)'); 
+        axes[2].set_ylabel(r'Distance (pix)'); 
+        axes[2].set_xlabel(r'Angle (rad)')
+        axes[3].set_xlabel(r'Angle (rad)')
+        plt.savefig(pngfile)
+  
+     # *** END of Streak finder class routines ***
+  
+    def get_outName(self):
+        """
+        Set up the output name based on the input filename
+        """
+        # Get extension and basename
+        baseName = os.path.basename(self.fileName)
+        extName  = os.path.splitext(baseName)[1]
+         
+        # Check whether this is 'fits.fz' or 'fits' files and get the name
+        if extName == '.fz':
+            outBasename = "%s"      % os.path.splitext(baseName)[0]
+        elif extName == '.fits':
+            outBasename = "%s.fits" % os.path.splitext(baseName)[0]
+        else:
+            sys.exit("ERROR: Unknown file type extension for %s" % self.fileName)
+         
+        # Decide if we want to compress the output, default is not to.
+        if self.compress:
+            outName = "%s.fz" % os.path.join(self.outdir,outBasename)
+        else:
+            outName = "%s"    % os.path.join(self.outdir,outBasename)
+           
+        self.outName     = outName
+        self.outBasename = outBasename
+          
+    def write(self,**kwargs):
+        """
+        Use fitsio to write the output file compressed or not
+        """
+         
+        # Decide if compress, that will define the fileName, compression type and tile_dims
+        self.compress  = kwargs.get('compress',None)
+        # Define type of compresion and tile_dims
+        if self.compress:
+            self.compress  = 'RICE'
+            self.tile_dims = [1,2048]
+        else:
+            self.compress  = None
+            self.tile_dims = None
+         
+        # Get the outputname self.outName
+        self.get_outName()
+        # Write the output file, one HDU at a time
+        ofits = fitsio.FITS(self.outName,'rw',clobber=True)
+        # Science -- use scia -- ndarray representation
+        ofits.write(self.OUT_SCI,header=self.h_sci,compress=self.compress,tile_dims=self.tile_dims)
+        # The Mask
+        ofits.write(self.OUT_MSK,header=self.h_msk,compress=self.compress,tile_dims=self.tile_dims)
+        # The Weight
+        ofits.write(self.OUT_WGT,header=self.h_wgt,compress=self.compress,tile_dims=self.tile_dims)
+        # Close the file
+        ofits.close()
+        print >>sys.stderr,"# Wrote: %s" % self.outName
+  
+    def write_streak_objects(self):
+        self.get_outName()
+        outname =self.outName.split('.fit')[0] + '_objs.fits'
+        #logger.info("Writing objects: %s" % (objsfile))
+        print "# Writing objects: %s" % (outname)
+        fitsio.write(outname,self.mask_objs,clobber=True)
+  
+    def write_streak_mask(self):
+        self.get_outName()
+        outname =self.outName.split('.fit')[0] + '_mask.fits'
+        print "# Writing mask: %s" % (outname)
+        
+        maskonly = np.zeros(self.OUT_MSK.shape,dtype=self.OUT_MSK.dtype)
+        test = np.where((self.OUT_MSK & self.setbit) > 0)
+        maskonly[test[0],test[1]] = self.setbit
+   
+        # Write mask as float32 so that "ds9 -mask" reads properly
+        header = copy.copy(self.h_msk)
+        header['BZERO'] = 0 
+        fitsio.write(outname,maskonly.astype('f4'),header=header,clobber=True)
       
       
 #########################
 # LSST extra functions
 #########################
 def mk2Dimage_from_footprint(footprint,dimensions,output='ndarray',value=1.0):
-
-   import lsst.afw.image       as afwImage
-
-   '''Create a 2D-image of the from a footprint element'''
-
-   image2D    = afwImage.ImageF(dimensions) 
-   image2D[:] = 0x0
-   nspan = 0
-   # Loop over 
-   for cr in footprint:
-       for s in cr.getSpans():
-           nspan += 1
-           x0, x1, y = s.getX0(), s.getX1(), s.getY()
-           image2D[x0:x1+1, y] = value
-
-   # Make it a numpy array
-   if output == 'ndarray' or output == 'numpy':
-      print "# Will return Numpy Array"
-      return image2D.getArray()           
-   else:
-      return image2D
-
-   return
+  
+    import lsst.afw.image       as afwImage
+  
+    '''Create a 2D-image of the from a footprint element'''
+  
+    image2D    = afwImage.ImageF(dimensions) 
+    image2D[:] = 0x0
+    nspan = 0
+    # Loop over 
+    for cr in footprint:
+        for s in cr.getSpans():
+            nspan += 1
+            x0, x1, y = s.getX0(), s.getX1(), s.getY()
+            image2D[x0:x1+1, y] = value
+  
+    # Make it a numpy array
+    if output in ['ndarray','numpy']:
+        print "# Will return Numpy Array"
+        return image2D.getArray()           
+    else:
+        return image2D
+  
+    return
 
 ####################################
 # Streak finder ultility functions
@@ -1173,7 +1166,6 @@ def create_rectangle(mask, slope, pad=0):
     Returns:
     vertices : Array of rectangle vertices
     """
-
     ypix, xpix = np.nonzero(mask)
  
     # Rotate the masked streak to horizontal (hence the minus sign)
@@ -1411,30 +1403,27 @@ def read_template(filename):
 # General useful functions
 ###########################
 def get_hdu_numbers(FITS):
-   """
-   Simple function to figure the HDU extensions for DESDM fits files
-   in:  a fitsio.FITS object
-   out: (sci_ext, msk_ext, wgt_ext) extension numbers 
-   """
-   sci_ext = None
-   msk_ext = None
-   wgt_ext = None
-   # Loop trough each HDU on the fits file
-   for i in range(len(FITS)):
-      h = FITS[i].read_header()       # Get the header
-      if ('DES_EXT' in h.keys()) :
-         extname = h['DES_EXT'].strip()
-         if (extname == 'IMAGE') :
-            sci_ext = i
-         elif (extname == 'MASK') :
-            msk_ext = i
-         elif (extname == 'WEIGHT'):
-            wgt_ext = i
-
-   if (sci_ext is None or msk_ext is None or wgt_ext is None):
-      sys.exit("Cannot find IMAGE, MASK, WEIGHT extensions via DES_EXT keyword in header")
-    
-   return sci_ext,msk_ext,wgt_ext
+    """
+    Simple function to figure the HDU extensions for DESDM fits files
+    in:  a fitsio.FITS object
+    out: (sci_ext, msk_ext, wgt_ext) extension numbers 
+    """
+    sci_ext = None
+    msk_ext = None
+    wgt_ext = None
+    # Loop trough each HDU on the fits file
+    for i in range(len(FITS)):
+        h = FITS[i].read_header()       # Get the header
+        if ('DES_EXT' in h.keys()) :
+            extname = h['DES_EXT'].strip()
+            if   (extname == 'IMAGE') : sci_ext = i
+            elif (extname == 'MASK')  : msk_ext = i
+            elif (extname == 'WEIGHT'): wgt_ext = i
+  
+    if (sci_ext is None or msk_ext is None or wgt_ext is None):
+        sys.exit("Cannot find IMAGE, MASK, WEIGHT extensions via DES_EXT keyword in header")
+     
+    return sci_ext,msk_ext,wgt_ext
 
 def get_FWHM(FITS,sci_hdu):
 
@@ -1443,32 +1432,31 @@ def get_FWHM(FITS,sci_hdu):
    header = FITS[sci_hdu].read_header()
    # Read in the pixelscale
    try:
-      pixscale = header['PIXSCAL1']
+       pixscale = header['PIXSCAL1']
    except:
-      pixscale = 0.27
-      print "# WARNING: Could not read PIXSCAL1 keyword from Science HDU"
-      print "# WARNING: Will default to %s" % pixscale
+       pixscale = 0.27
+       print "# WARNING: Could not read PIXSCAL1 keyword from Science HDU"
+       print "# WARNING: Will default to %s" % pixscale
 
    # Read in the FWHM
    try:
-      fwhm        = header['FWHM']
-      fwhm_arcsec = fwhm*pixscale
+       fwhm        = header['FWHM']
+       fwhm_arcsec = fwhm*pixscale
    except:
-      fwhm = 5.5
-      fwhm_arcsec = fwhm*pixscale
-      print "# WARNING: Could not read FWHM keyword from Science HDU"
-      print "# WARNING: Will use FWHM=%s pixels instead" % fwhm
+       fwhm = 5.5
+       fwhm_arcsec = fwhm*pixscale
+       print "# WARNING: Could not read FWHM keyword from Science HDU"
+       print "# WARNING: Will use FWHM=%s pixels instead" % fwhm
 
    # Into arcseconds
    if fwhm_arcsec > 1.2:
-      print "# WARNING: Header FWHM value: %.2f[arcsec] / %.1f[pixels] is too high -- should not be trusted" % (fwhm_arcsec,fwhm)
+       print "# WARNING: Header FWHM value: %.2f[arcsec] / %.1f[pixels] is too high -- should not be trusted" % (fwhm_arcsec,fwhm)
       
    return fwhm
 
 # Safe extraction of filename
 def extract_filename(filename):
-    if filename[0] == "!":
-        filename=filename[1:]
+    if filename[0] == "!": filename=filename[1:]
     filename = os.path.expandvars(filename)
     filename = os.path.expanduser(filename)
     return filename
@@ -1487,7 +1475,12 @@ def elapsed_time(t1,verb=False):
 # directly into DESIMA.__dict__ (this is not
 # ideal.
 def cmdline():
-
+    """
+    Build the command line argument parser for DES
+    image masking. Arguments for the CR and STREAK
+    masking code are specified in the DESIMA class
+    and are loaded into the argument parser here.
+    """
     import argparse
     parser = argparse.ArgumentParser(description="Performs masking of DECam images. Cosmic-ray masking is performed using the LSST python framework. Streak masking is performed using a Hough transform algorithm.",formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
@@ -1497,7 +1490,9 @@ def cmdline():
     parser.add_argument("outdir",   
                         help="Path to output files [file name preserved]")
     
-    # The general optional arguments
+    # The optional arguments for general execution
+    parser.add_argument("-v","--verbose", action="count", 
+                        help="Output verbosity [NOT IMPLEMENTED]")
     parser.add_argument("--compress", action="store_true", default=False,
                         help="RICE/fpack compress output file [default=False]")
     #parser.add_argument("--tile_dims", action="store", type=int, default=None, nargs=2,
@@ -1508,38 +1503,40 @@ def cmdline():
     for key,val in DESIMA.CR_ARGS.items():
        group.add_argument('--%s'%key,dest=key,**val)
 
-    # The optional arguments for streak masking
+    # The optional arguments for STREAK masking
     group = parser.add_argument_group('streaks')
     for key,val in DESIMA.STREAK_ARGS.items():
-       group.add_argument('--%s'%key,dest=key,**val)
+       group.add_argument('--%s'%key, dest=key, **val)
 
     args = parser.parse_args()
 
+    # ADW: This could be cleaner...
     if args.noInterpCR:
         args.interpCR = False
 
     print "# Will run:"
     print "# %s " % parser.prog
     for key,val in sorted(vars(args).items()):
-       #print "# \t--%-10s\t%s" % (key,vars(args)[key])
        print "# \t--%-10s\t%s" % (key,val)
 
     return parser,args
 
 if __name__ == "__main__":
 
-   # Get the start time
-   t0 = time.time()
-   parser,args = cmdline()
-   kwargs = vars(args)
+    # Get the start time
+    t0 = time.time()
 
-   desobj = DESIMA(args.fileName,args.outdir)
-   # CR rejection
-   desobj.CRs(**kwargs)
-   # Streak masking
-   desobj.mask_streaks(**kwargs)
-   desobj.write(compress=args.compress)
-   print >>sys.stderr,"# Time:%s" % immask.elapsed_time(t0)
+    # Get the command line arguments
+    parser,args = cmdline()
+    kwargs = vars(args)
+     
+    desobj = DESIMA(args.fileName,args.outdir)
+    # CR rejection
+    desobj.CRs(**kwargs)
+    # Streak masking
+    desobj.mask_streaks(**kwargs)
+    desobj.write(compress=args.compress)
+    print >>sys.stderr,"# Time:%s" % immask.elapsed_time(t0)
 
 
 ### ADW: To be removed once migration is complete.
