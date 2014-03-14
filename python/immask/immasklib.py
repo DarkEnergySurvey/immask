@@ -46,16 +46,11 @@ class DESIMA:
    Felipe Menanteau, NCSA, University of Illinois.
    """
 
-   def __init__ (self,fileName,outdir):
+   def __init__ (self,fileName,outName):
 
       self.fileName  = extract_filename(fileName)
-      self.outdir    = outdir
+      self.outName   = extract_filename(outName)
       
-      # Make sure the output directory exits
-      if not os.path.exists(outdir):
-         print "# Will create output directory  %s" % outdir
-         os.mkdir(outdir)
-         
       # Gets SCI, MSK, WGT and created VAR
       self.read_HDUs()
 
@@ -351,6 +346,7 @@ class DESIMA:
       """
       ####################################################
       # Read in the **keys
+      self.outdir       = keys.get('outdir')
       self.bkgfile      = keys.get('bkgfile')        # SEx background image
       self.draw         = keys.get('draw',False)     # Draw Plots with matplotlibe
       # Image pre-processing
@@ -531,9 +527,14 @@ class DESIMA:
       """
       Draw the streak finder dignostic plot with pylab
       """
+      # Make sure the output directory exits
+      if not os.path.exists(self.outdir):
+         print "# Will create output directory  %s" % self.outdir
+         os.mkdir(self.outdir)
+         
       # Get the drawbase name
       baseName      = os.path.basename(self.fileName)
-      outBasename   = os.path.splitext(baseName)[0]
+      outBasename   = os.path.splitext(os.path.splitext(baseName)[0])[0] # double split for .fits.fz files
       drawbase = os.path.join(self.outdir,outBasename)
       
       # The sky noise
@@ -603,31 +604,16 @@ class DESIMA:
 
     # *** END of Streak finder class routines ***
 
-   def get_outName(self):
+   def check_outName(self):
 
-      """
-      Set up the output name based on the input filename
-      """
-      # Get extension and basename
-      baseName = os.path.basename(self.fileName)
+      """ Make sure that fpack files have the .fz extension"""
+
+      baseName = os.path.basename(self.outName)
       extName  = os.path.splitext(baseName)[1]
-
-      # Check wether this is fits.fz or fits files and get the outputname
-      if extName == '.fz':
-         outBasename = "%s"      % os.path.splitext(baseName)[0]
-      elif extName == '.fits':
-         outBasename = "%s.fits" % os.path.splitext(baseName)[0]
-      else:
-         sys.exit("ERROR: Unknown file type extension for %s" % self.fileName)
-
-      # Decide if we want to compress the output, default is not to.
-      if self.compress:
-         outName = "%s.fz" % os.path.join(self.outdir,outBasename)
-      else:
-         outName = "%s"    % os.path.join(self.outdir,outBasename)
-         
-      self.outName     = outName
-      self.outBasename = outBasename
+      
+      if self.compress and extName == '.fits':
+         self.outName = self.outName + ".fz"
+         print "# Updating output name to: %s" % self.outName
          
    def write(self,**keys):
       """
@@ -644,8 +630,8 @@ class DESIMA:
          self.compress  = None
          self.tile_dims = None
 
-      # Get the outputname self.outName
-      self.get_outName()
+      # Check that output name is consistent with compression setting fits.fz vs .fits
+      self.check_outName()
       # Write the output file, one HDU at a time
       ofits = fitsio.FITS(self.outName,'rw',clobber=True)
       # Science -- use scia -- ndarray representation
@@ -1179,9 +1165,6 @@ def elapsed_time(t1,verb=False):
         print >>sys.stderr,"Elapsed time: %s" % stime
     return stime
 
-
-
-
 # The main fuction to fill up all of the options
 def cmdline():
 
@@ -1190,12 +1173,13 @@ def cmdline():
 
     # The positional arguments
     parser.add_argument("fileName", help="Fits file to process")
-    parser.add_argument("outdir",   help="Path to output files [will preserve same name]")
+    parser.add_argument("outName",  help="Name of output fits file")
 
-
+    # Location of additional files
+    parser.add_argument("--outdir", action="store", default="immask_out",
+                        help="Path to QA/extra output files")
 
     # The optional arguments for CR masking
-
     parser.add_argument("--interpCR", action="store_true", default=True,
                         help="Interpolate CR in Science image [default=True]")
 
@@ -1272,18 +1256,16 @@ if __name__ == "__main__":
 
    # Get the start time
    t0 = time.time()
-   args = cmdline()
-   desobj = DESMaskCRs(args.fileName,args.outdir)
-   desobj.CRs(FWHM     = args.fwhm,
-              dilateCR = args.dilateCR,
-              interpCR = args.interpCR,
-              minSigma = args.minSigma,
-              min_DN   = args.min_DN,
-              nGrowCR  = args.nGrowCR)
+   
+   args   = immask.cmdline()
+   desobj = immask.DESIMA(args.fileName,args.outName) #,args.outdir)
 
-   # Write it out
+   # CR Rejection
+   desobj.CRs(**args.__dict__)
+   # Streaks
+   desobj.mask_streaks(**args.__dict__)
    desobj.write(compress=args.compress)
-   print >>sys.stderr,"# Time:%s" % elapsed_time(t0)
+   print >>sys.stderr,"# Time:%s" % immask.elapsed_time(t0)
 
 
    
