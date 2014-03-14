@@ -9,7 +9,7 @@ import immask
 t0 = time.time()
    
 args   = immask.cmdline()
-desobj = immask.DESIMA(args.fileName,args.outdir)
+desobj = immask.DESIMA(args.fileName,args.outName)
 
 # CR Rejection
 desobj.CRs(**args.__dict__)
