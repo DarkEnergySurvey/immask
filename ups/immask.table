@@ -1,4 +1,4 @@
-setupRequired("python")
+setupRequired("matplotlib")
 setupRequired("scipy")
 setupRequired("numpy")
 setupRequired("fitsio")
