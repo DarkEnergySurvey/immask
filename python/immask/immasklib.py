@@ -724,15 +724,15 @@ class DESIMA:
   
     def write_streak_objects(self):
         self.get_outName()
-        outname =self.outName.split('.fit')[0] + '_objs.fits'
+        outname =self.outName.split('.fit')[0] + '_streaks.fits'
         #logger.info("Writing objects: %s" % (objsfile))
-        print "# Writing objects: %s" % (outname)
+        print "# Writing streak objects: %s" % (outname)
         fitsio.write(outname,self.mask_objs,clobber=True)
   
     def write_streak_mask(self):
         self.get_outName()
         outname =self.outName.split('.fit')[0] + '_mask.fits'
-        print "# Writing mask: %s" % (outname)
+        print "# Writing streak mask: %s" % (outname)
         
         maskonly = np.zeros(self.OUT_MSK.shape,dtype=self.OUT_MSK.dtype)
         test = np.where((self.OUT_MSK & self.setbit) > 0)
