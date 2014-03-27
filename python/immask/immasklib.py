@@ -107,14 +107,15 @@ class DESIMA:
     STREAK_ARGS['maxmask']      = dict(type=int, action="store", default=1000,
                                        help="Maximum number of streaks to mask [NOT IMPLEMENTED]")
 
-    def __init__ (self,fileName,outdir, **kwargs):
+    def __init__ (self, fileName, outName, outdir, **kwargs):
         self.fileName  = extract_filename(fileName)
+        self.outName   = extract_filename(outName)
         self.outdir    = outdir
-       
+
         # Make sure the output directory exits
-        if not os.path.exists(outdir):
-            print "# Will create output directory  %s" % outdir
-            os.mkdir(outdir)
+        if not os.path.exists(self.outdir):
+            print "# Will create output directory  %s" % self.outdir
+            os.mkdir(self.outdir)
           
         # Gets SCI, MSK, WGT and created VAR
         self.read_HDUs()
@@ -597,8 +598,7 @@ class DESIMA:
          
         # Get the drawbase name
         baseName      = os.path.basename(self.fileName)
-        #outBasename   = os.path.splitext(baseName)[0]
-        outBasename   = baseName.split('.fit')[0]
+        outBasename   = os.path.splitext(os.path.splitext(baseName)[0])[0] # double split for '.fits.fz' files
         drawbase = os.path.join(self.outdir,outBasename)
          
         # The sky noise
@@ -668,30 +668,15 @@ class DESIMA:
   
      # *** END of Streak finder class routines ***
   
-    def get_outName(self):
+    def check_outName(self):
         """
-        Set up the output name based on the input filename
+        Make sure that fpack files have the .fz extension
         """
-        # Get extension and basename
-        baseName = os.path.basename(self.fileName)
+        baseName = os.path.basename(self.outName)
         extName  = os.path.splitext(baseName)[1]
-         
-        # Check whether this is 'fits.fz' or 'fits' files and get the name
-        if extName == '.fz':
-            outBasename = "%s"      % os.path.splitext(baseName)[0]
-        elif extName == '.fits':
-            outBasename = "%s.fits" % os.path.splitext(baseName)[0]
-        else:
-            sys.exit("ERROR: Unknown file type extension for %s" % self.fileName)
-         
-        # Decide if we want to compress the output, default is not to.
-        if self.compress:
-            outName = "%s.fz" % os.path.join(self.outdir,outBasename)
-        else:
-            outName = "%s"    % os.path.join(self.outdir,outBasename)
-           
-        self.outName     = outName
-        self.outBasename = outBasename
+      
+        if self.compress and extName == '.fits':
+            raise Exception("--compress specified with .fits filename")
           
     def write(self,**kwargs):
         """
@@ -708,8 +693,8 @@ class DESIMA:
             self.compress  = None
             self.tile_dims = None
          
-        # Get the outputname self.outName
-        self.get_outName()
+        # Check the outputname self.outName
+        self.check_outName()
         # Write the output file, one HDU at a time
         ofits = fitsio.FITS(self.outName,'rw',clobber=True)
         # Science -- use scia -- ndarray representation
@@ -723,16 +708,20 @@ class DESIMA:
         print >>sys.stderr,"# Wrote: %s" % self.outName
   
     def write_streak_objects(self):
-        self.get_outName()
-        outname =self.outName.split('.fit')[0] + '_streaks.fits'
+        self.check_outName()
+        baseName = os.path.basename(self.outName)
+        outBase = baseName.split('.fit')[0]+'_streaks.fits'
+        outName = os.path.join(self.outdir,outBase)
         #logger.info("Writing objects: %s" % (objsfile))
-        print "# Writing streak objects: %s" % (outname)
-        fitsio.write(outname,self.mask_objs,clobber=True)
+        print "# Writing streak objects: %s" % (outName)
+        fitsio.write(outName,self.mask_objs,clobber=True)
   
     def write_streak_mask(self):
-        self.get_outName()
-        outname =self.outName.split('.fit')[0] + '_mask.fits'
-        print "# Writing streak mask: %s" % (outname)
+        self.check_outName()
+        baseName = os.path.basename(self.outName)
+        outBase = baseName.split('.fit')[0]+'_mask.fits'
+        outName = os.path.join(self.outdir,outBase)
+        print "# Writing streak mask: %s" % (outName)
         
         maskonly = np.zeros(self.OUT_MSK.shape,dtype=self.OUT_MSK.dtype)
         test = np.where((self.OUT_MSK & self.setbit) > 0)
@@ -741,7 +730,7 @@ class DESIMA:
         # Write mask as float32 so that "ds9 -mask" reads properly
         header = copy.copy(self.h_msk)
         header['BZERO'] = 0 
-        fitsio.write(outname,maskonly.astype('f4'),header=header,clobber=True)
+        fitsio.write(outName,maskonly.astype('f4'),header=header,clobber=True)
       
       
 #########################
@@ -1486,11 +1475,13 @@ def cmdline():
 
     # The positional arguments
     parser.add_argument("fileName", 
-                        help="FITS file to process")
-    parser.add_argument("outdir",   
-                        help="Path to output files [file name preserved]")
-    
+                        help="FITS file to process.")
+    parser.add_argument("outName",   
+                        help="Name of output FITS file.")
+
     # The optional arguments for general execution
+    parser.add_argument("--outdir", action="store",default="immask_out",
+                        help="Path to QA output files")
     parser.add_argument("-v","--verbose", action="count", 
                         help="Output verbosity [NOT IMPLEMENTED]")
     parser.add_argument("--compress", action="store_true", default=False,
@@ -1537,97 +1528,3 @@ if __name__ == "__main__":
     desobj.mask_streaks(**kwargs)
     desobj.write(compress=args.compress)
     print >>sys.stderr,"# Time:%s" % immask.elapsed_time(t0)
-
-
-### ADW: To be removed once migration is complete.
-
-### self.FWHM      = kwargs.get('FWHM',None)
-### self.minSigma  = kwargs.get('minSigma')
-### self.min_DN    = kwargs.get('min_DN')
-### self.interpCR  = kwargs.get('interpCR')
-### self.dilateCR  = kwargs.get('dilateCR')
-### self.nGrowCR   = kwargs.get('nGrowCR')
-
-### group.add_argument("--interpCR", action="store_true", default=True,
-###                    help="Interpolate CR in Science image.")
-### group.add_argument("--noInterpCR", action="store_true", default=False,
-###                    help="Do not Interpolate CR in Science image.")
-### group.add_argument("--dilateCR", action="store_true", default=False,
-###                    help="Dilate CR mask by 1 pixel.")
-### group.add_argument("--nGrowCR", type=int, action="store", default=1,
-###                    help="Dilate CR mask by nGrowCR pixels.")
-### group.add_argument("--fwhm", type=float, action="store", default=None,
-###                    help="Set a FWHM [pixels] value that overides the header FWHM value in image")
-### group.add_argument("--minSigma", type=float, action="store", default=5.0,
-###                    help="CRs must be > this many sky-sig above sky")
-### group.add_argument("--min_DN", type=int, action="store", default=150,
-###                    help="CRs must have > this many DN (== electrons/gain) in initial detection")
-
-### # Read in the **kwargs
-### self.bkgfile      = kwargs.get('bkgfile')        # SEx background image
-### self.draw         = kwargs.get('draw',False)     # Draw plots with matplotlib
-### # Image pre-processing
-### self.bin_factor   = kwargs.get("bin_factor",8)   # Binning factor to beat down sky noise         
-### # For detection, merging, and characterization
-### self.nsig_sky     = kwargs.get("nsig_sky",1.5)   # Threshold for sky noise                  
-### self.nsig_detect  = kwargs.get("nsig_detect",14) # Threshold for Hough peak detection 
-### self.nsig_merge   = kwargs.get("nsig_merge",8)   # Threshold for Hough peak merging  
-### self.nsig_mask    = kwargs.get("nsig_mask",8)    # Threshold for Hough peak characterization
-### # Quality cuts
-### self.max_width    = kwargs.get("max_width",150)  # Maximum width in pixels   
-### self.max_angle    = kwargs.get("max_angle",15)   # Maximum angle alowed (deg), avoids curves
-### # For masking
-### self.mask_factor  = kwargs.get("mask_factor",1.5) # Factor to increase streak width for masking  
-### self.maskbits     = kwargs.get("maskbits",1023)   # Ignore these mask bits
-### self.setbit       = kwargs.get("setbit",1024)     # New streak mask bit
-### self.maxmask      = kwargs.get("maxmask",1000)    # Maximum number of streaks to mask (not implemented)
-### self.clip_mask    = kwargs.get("clip_mask",False)  # Clip underpopulated ends of the streak mask
-### self.nsig_clip    = kwargs.get("nsig_clip",2)     # Clip chunks that are more than 'nsig' underdense
-### self.clip_angle   = kwargs.get("clip_angle",45)   # Clip streaks close to the given abs. angle (deg)
-### self.clip_delta   = kwargs.get("clip_delta",10)   # Proximity (in deg) to the clipping angle for inclusion (>=90 will take all angles)
-### self.template_dir = kwargs.get("template_dir" ,"/dev/null") # Directory for template file (otherwise create template)
-### #self.template_dir = kwargs.get("template_dir" ,"./")
-### ####################################################
-
-### group.add_argument("--bkgfile",  
-###                    help="Input background FITS file (fz/fits)")
-### group.add_argument("--draw",action='store_true',default=False,
-###                    help="Use matplotlib to draw diagnostic plots.")
-### group.add_argument("--template_dir",default="/dev/null",
-###                    help="Directory containing Hough template.")
-### # Image pre-processing
-### group.add_argument("--bin_factor",  type=int, action="store", default=8,
-###                    help="Binning factor to beat down sky noise")
-### # For detection, merging, and characterization
-### group.add_argument("--nsig_sky",    type=float, action="store", default=1.5,
-###                    help="Threshold for sky noise")
-### group.add_argument("--nsig_detect", type=float, action="store", default=14,
-###                    help="Threshold for Hough peak detection")
-### group.add_argument("--nsig_merge",  type=float, action="store", default=8,
-###                    help="Threshold for Hough peak merging ")
-### group.add_argument("--nsig_mask",   type=float, action="store", default=8,
-###                    help="Threshold for Hough peak characterization")
-### # Quality cuts
-### group.add_argument("--max_width",   type=float, action="store", default=150,
-###                    help="Maximum width in pixels ")
-### group.add_argument("--max_angle",   type=float, action="store", default=15,
-###                    help="Maximum angle alowed (deg), avoids curves")
-### # For masking
-### group.add_argument("--mask_factor",type=float, action="store", default=1.5,
-###                    help="Factor to increase streak width for masking")
-### group.add_argument("--maskbits",   type=int, action="store", default=1023,
-###                    help="Ignore these mask bits ")
-### group.add_argument("--setbit",     type=int, action="store", default=1024,
-###                    help="New streak mask bit")
-### group.add_argument("--maxmask",    type=int, action="store", default=1000,
-###                     help="Maximum number of streaks to mask [NOT IMPLEMENTED]")
-### # For clipping ends of streak
-### group.add_argument("--clip_mask",   action="store_true", 
-###                    help="Clip underpopulated ends of the streak mask.")
-### group.add_argument("--nsig_clip",   type=float, default=2,
-###                    help="Clip chunks that are more than 'nsig' underdense.")
-### group.add_argument("--clip_angle",  type=float, default=45,
-###                    help="Clip streaks close to the given abs. angle (deg).")
-### group.add_argument("--clip_delta",  type=float, default=10,
-###                    help="Clip angle range (deg); >90 for all angles")
-
