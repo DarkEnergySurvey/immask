@@ -1,5 +1,5 @@
 __author__  = "Felipe Menanteau"
-__version__ = '0.1'
+__version__ = '0.2'
 version = __version__
 
 """
@@ -21,9 +21,9 @@ from .immasklib import cmdline
 # CR masking routine only
 #from cr_masking import *
 
-# To load the standalon Streak masking routines at startup --- not required
+# To load the standalone streak masking routines at startup --- not required
 #from . import streak_masking
 #from .streak_masking import STREAK
 #from .streak_masking import cmdline
-print "#\tModule %s by %s, version %s is loaded" % (__name__,__author__,__version__)
+print "# Module %s v%s is loaded" % (__name__,__version__)
 
