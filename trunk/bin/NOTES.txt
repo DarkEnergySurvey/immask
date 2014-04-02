@@ -1,0 +1,9 @@
+# To install locally and run
+python setup.py install --home=$HOME/Python
+
+# To run
+./immask DECam_00145879_21.fits.fz clean_DECam_00145879_21.fits.fz --bkgfile DECam_00145879_21_bkg.fits.fz --compress
+
+
+./immask DECam_00226647_47.fits.fz clean_DECam_00226647_47.fits.fz --bkgfile DECam_00226647_47_bkg.fits.fz --compress
+
