@@ -411,7 +411,7 @@ class DESIMA:
         ####################################################
         for key in np.intersect1d(self.STREAK_ARGS.keys(),kwargs.keys()):
             self.__dict__[key] = kwargs[key]
-         
+
         # Read in the background image nd-array
         self.BKG    = read_bkg_image(self.bkgfile)
          
@@ -677,10 +677,10 @@ class DESIMA:
         extName  = os.path.splitext(baseName)[1]
       
         if self.compress and extName == '.fits':
-            raise Exception("--compress specified with '.fits' outfile")
+            raise IOError ("--compress specified with '.fits' outfile")
 
         if not self.compress and extName == '.fz':
-            raise Exception("--compress not specified with '.fz' outfile")
+            raise IOError ("--compress not specified with '.fz' outfile")
 
           
     def write(self,**kwargs):
@@ -774,6 +774,10 @@ def read_bkg_image(bkgfile):
     """
 
     print "# Reading background file:%s" % bkgfile
+
+    # Make sure the image exists
+    if not os.path.exists(bkgfile):
+        raise IOError ("File: %s does not exists... bye" % bkgfile)
 
     image_ext = None
     FITS = fitsio.FITS(bkgfile)
