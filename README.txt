@@ -9,6 +9,10 @@ Requires:
  fitsio:     https://github.com/esheldon/fitsio version 0.9.4 or above (RICE compression enabled)
  pyhough:    https://github.com/erykoff/pyhough  
  despyutils: For transplanted wcsutil from Erin Sheldon
+
+To install locally in $HOME:
+
+ %> python setup.py install --home=$HOME/Python
  
 To run:
 
