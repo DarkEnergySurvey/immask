@@ -6,6 +6,7 @@ Requires:
 
  numpy:      http://www.numpy.org/ version 1.6.2 or above
  scipy:      http://scipy.org/ version 0.12.0 or above
+ matplotlib: http://matplotlib.org/ version 1.2.0 or above
  fitsio:     https://github.com/esheldon/fitsio version 0.9.4 or above (RICE compression enabled)
  pyhough:    https://github.com/erykoff/pyhough  
  despyutils: For transplanted wcsutil from Erin Sheldon
