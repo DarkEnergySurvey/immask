@@ -1417,8 +1417,8 @@ def get_hdu_numbers(FITS):
             elif (extname == 'WEIGHT'): wgt_ext = i
   
     if (sci_ext is None or msk_ext is None or wgt_ext is None):
-        sys.exit("Cannot find IMAGE, MASK, WEIGHT extensions via DES_EXT keyword in header")
-     
+        raise ValueError("Cannot find IMAGE, MASK, WEIGHT extensions via DES_EXT keyword in header")
+
     return sci_ext,msk_ext,wgt_ext
 
 def get_FWHM(FITS,sci_hdu):
