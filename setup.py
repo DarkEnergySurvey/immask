@@ -3,7 +3,7 @@ from distutils.core import setup
 
 # The main call
 setup(name='immask',
-      version ='0.1.0',
+      version ='0.2.0',
       license = "GPL",
       description = "The Image Masking Module for DESDM.",
       author = "Felipe Menanteau",
@@ -12,7 +12,6 @@ setup(name='immask',
       package_dir = {'': 'python'},
       scripts = ['bin/immask',
                  'bin/example_immask.py',
-                 'bin/example_streak_mask_standalone.py',
                  'bin/source_me_lsst'],
       )
 
