@@ -1,5 +1,0 @@
-#!/usr/bin/env bash
-svn export $SVNROOT/$PRODUCT/$SVN_PATH $PRODUCT
-cd $PRODUCT
-export PYTHONPATH=$PYTHONPATH:$PRODUCT_DIR/python
-python setup.py install --prefix=$PRODUCT_DIR --install-lib=$PRODUCT_DIR/python
