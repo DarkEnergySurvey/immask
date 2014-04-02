@@ -106,6 +106,9 @@ class DESIMA:
                                        help="New streak mask bit")
     STREAK_ARGS['maxmask']      = dict(type=int, action="store", default=1000,
                                        help="Maximum number of streaks to mask [NOT IMPLEMENTED]")
+    # Streak objects
+    STREAK_ARGS['write_streaks']= dict(action="store_true", default=False,
+                                       help="Write out streak objects") 
 
     def __init__ (self, fileName, outName, outdir, **kwargs):
         self.fileName  = extract_filename(fileName)
@@ -575,7 +578,12 @@ class DESIMA:
         self.OUT_WGT[ypix,xpix] = 0
          
         # Draw Plots
-        if self.draw: self.drawPlots()
+        if self.draw:
+            self.drawPlots()
+        
+        # Write streak objects
+        if self.write_streaks:
+            self.write_streak_objects() 
              
     def read_Hough_template(self):
         """
