@@ -33,6 +33,101 @@ matplotlib.use('Agg')
 import matplotlib.path
 
 
+class DESImage(object):
+    """
+    A Class to handle DECam fits/fits.fz files. Uses fitsio to 
+    open/read/close files. 
+    """
+
+    def __init__(self, filename):
+        self.filename  = extract_filename(filename)
+        self.outname   = extract_filename(outname)
+        self.outdir    = outdir
+
+        # Gets SCI, MSK, WGT and created VAR
+        self.read()
+        # Make shallow copies of HDUs and created VAR (OUT_*)
+        self.copy_ndarrays() 
+        
+        
+    def __str__(self):
+        return str(self.ifits)
+
+    def read(self):
+        """
+        Read image HDUs as ndarrays and headers as dictionaries 
+        using fitsio.
+        """
+        # Get the fitsio element -- we'll modify this in place
+        print "# Reading in extensions and headers for %s" % self.fileName
+        self.ifits = fitsio.FITS(self.fileName,'r')
+        sci_hdu, msk_hdu, wgt_hdu = get_hdu_numbers(self.ifits)
+        # Read in the Science, Mask and Weight Images array with fitsio, as we'll
+        # need to write them out using fitsio once we are done with them
+        self.SCI = self.ifits[sci_hdu].read()
+        self.MSK = self.ifits[msk_hdu].read()
+        self.WGT = self.ifits[wgt_hdu].read()
+        # Now let's read the headers
+        self.h_sci = self.ifits[sci_hdu].read_header()
+        self.h_msk = self.ifits[msk_hdu].read_header()
+        self.h_wgt = self.ifits[wgt_hdu].read_header()     
+        # Get the image size to set the allowed fraction of image to be already masked
+        (self.ny,self.nx) = self.SCI.shape
+        # Pass them up
+        self.sci_hdu = sci_hdu
+        self.msk_hdu = msk_hdu
+        self.wgt_hdu = wgt_hdu
+        print "# Done reading HDU "
+  
+    def copy_ndarrays(self):
+        """
+        Make shallow copies (shallow is enough) of the SCI, MSK and WGT
+        ndarrays using python copy function to preserve the original
+        information of the fits files. We need to do this before they
+        are modified in place by the the LSST framework functions.
+        """
+        print "# Making shallow copies of SCI, MSK and WGT ndarrays"
+        self.OUT_SCI = copy.copy(self.SCI)
+        self.OUT_MSK = copy.copy(self.MSK)
+        self.OUT_WGT = copy.copy(self.WGT)
+        # A handy handle
+        self.headers = (self.h_sci,self.h_msk,self.h_wgt)
+        # Let's make a handle for the DESDM object
+        self.DESDMImage = (self.OUT_SCI,self.OUT_MSK,self.OUT_WGT)
+
+    def write(self, **kwargs):
+        """
+        Use fitsio to write the output file compressed or not
+        """
+        # Make sure the output directory exits
+        if not os.path.exists(self.outdir):
+            print "# Will create output directory  %s" % self.outdir
+            os.mkdir(self.outdir)
+
+        # Decide if compress, that will define the fileName, compression type and tile_dims
+        self.compress  = kwargs.get('compress',None)
+        # Define type of compresion and tile_dims
+        if self.compress:
+            self.compress  = 'RICE'
+            self.tile_dims = [1,2048]
+        else:
+            self.compress  = None
+            self.tile_dims = None
+         
+        # Check the output name is consistent with compression
+        self.check_outName()
+        # Write the output file, one HDU at a time
+        ofits = fitsio.FITS(self.outName,'rw',clobber=True)
+        # Science -- use scia -- ndarray representation
+        ofits.write(self.OUT_SCI,header=self.h_sci,compress=self.compress,tile_dims=self.tile_dims)
+        # The Mask
+        ofits.write(self.OUT_MSK,header=self.h_msk,compress=self.compress,tile_dims=self.tile_dims)
+        # The Weight
+        ofits.write(self.OUT_WGT,header=self.h_wgt,compress=self.compress,tile_dims=self.tile_dims)
+        # Close the file
+        ofits.close()
+        print >>sys.stderr,"# Wrote: %s" % self.outName
+
 class DESIMA:
     """
     A Class to handle DECam fits/fits.fz files. Uses fitsio to 
