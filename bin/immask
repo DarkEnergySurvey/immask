@@ -1,4 +1,18 @@
 #!/usr/bin/env python
+
+"""
+Executable for DESDM immask module. Not much to see here folks.
+
+$Id$
+$Rev::                                  $:  # Revision of last commit.
+$LastChangedBy::                        $:  # Author of last commit.
+$LastChangedDate::                      $:  # Date of last commit.
+
+@authors: Felipe Menanteau    <felipe@illinois.edu>
+@authors: Eli Rykoff          <rykoff@slac.stanford.edu>
+@authors: Alex Drlica-Wagner  <kadrlica@fnal.gov>
+"""
+
 import sys
 import time
 import immask
