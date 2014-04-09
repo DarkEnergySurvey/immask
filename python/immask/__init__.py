@@ -3,8 +3,7 @@ __version__ = '0.2.0'
 version = __version__
 
 """
- The DESDM immask module, masking cosmic ray and streaks on
- single-frame CCDs for now.
+The DESDM single-CCD image masking module.
 
 $Id$
 $Rev::                                  $:  # Revision of last commit.
