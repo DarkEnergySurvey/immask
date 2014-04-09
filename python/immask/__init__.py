@@ -13,9 +13,10 @@ $LastChangedDate::                      $:  # Date of last commit.
 """
 
 from . import immasklib
-from .immasklib import DESIMA
-from .immasklib import elapsed_time
 from .immasklib import cmdline
+from .immasklib import elapsed_time
+
+#from .immasklib import DESIMA
 
 # Other ways... not really used
 # CR masking routine only

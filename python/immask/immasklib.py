@@ -13,73 +13,29 @@ $LastChangedDate::                      $:  # Date of last commit.
 @authors: Alex Drlica-Wagner  <kadrlica@fnal.gov>
 """
 
-import math
-import os,sys
-import shutil
-import numpy as np
+import os
+import sys
 import fitsio 
 import time
 import copy
-import collections
-
+import argparse
 from collections import OrderedDict
 
-# For streak finder
+import numpy as np
 import scipy.ndimage as ndimage
 from scipy.optimize import fmin
 from scipy.spatial  import cKDTree
-from despyutils import wcsutil
-from pyhough.pyhough_lib import Hough
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.path
 
-import argparse
-from argparse import ArgumentParser
+from despyutils import wcsutil
+from pyhough.pyhough_lib import Hough
 
-def parser():
-    formatter = argparse.RawDescriptionHelpFormatter
-    description = "Command-line tool for DECam image masking.\nType 'immask <subcommand> --help' for help on a specific subcommand.\nAll subcommands take filename and outname arguments.\nTo run all masking algorithms, use 'all' subcommand."
-    parser = argparse.ArgumentParser(description=description,
-                                     formatter_class=formatter)
 
-    formatter = argparse.ArgumentDefaultsHelpFormatter
-    general = argparse.ArgumentParser(formatter_class=formatter,add_help=False)
-    general.add_argument("filename", help="FITS/FZ file to process.")
-    general.add_argument("outname", help="Name of output FITS/FZ file.")
-    general.add_argument('-v','--verbose', action="count", help="Output verbosity")
-    general.add_argument('--compress', action="store_true", help="RICE/fpack compress output")
-    general.add_argument('--outdir',default="immask_out", help="Path to QA output files")
-
-    subparsers=parser.add_subparsers(dest='command',title='Available subcommands')
-    
-    title = 'cosmics'
-    description = "Mask cosmic rays using the LSST python framework."
-    cosmics = CosmicMasker.argparser(title,add_help=False)
-    subparsers.add_parser(title,description=description,
-                          parents=[general,cosmics],formatter_class=formatter,
-                          help=description)
-
-    title = 'streaks'
-    description = "Mask satellites, UFOs, etc. using Hough transform."
-    streaks = StreakMasker.argparser(title,add_help=False)
-    subparsers.add_parser(title,description=description,
-                          parents=[general,streaks],formatter_class=formatter,
-                          help=description)
-
-    # Add star masks here...
-    
-    # Add bleed trails here...
-
-    title = 'all'
-    description = "Mask all image defects."
-    subparsers.add_parser(title,description=description,
-                          parents=[general,cosmics,streaks],
-                          formatter_class=formatter,
-                          help=description)
-
-    
-    return parser
+#####################
+### Image objects ###
+#####################
 
 class DESImage(object):
     """
@@ -131,13 +87,15 @@ class DESImage(object):
         filename = os.path.expanduser(filename)
         return filename
 
-    @staticmethod
-    def get_hdu_numbers(FITS):
+
+    def get_hdu_numbers(self):
         """
         Simple function to figure the HDU extensions for DESDM fits files
         in:  a fitsio.FITS object
         out: (sci_ext, msk_ext, wgt_ext) extension numbers 
         """
+        FITS = self.ifits
+
         sci_ext = None
         msk_ext = None
         wgt_ext = None
@@ -192,7 +150,7 @@ class DESImage(object):
         # Get the fitsio element -- we'll modify this in place
         print "# Reading in extensions and headers for %s" % self.filename
         self.ifits = fitsio.FITS(self.filename,'r')
-        sci_hdu, msk_hdu, wgt_hdu = self.get_hdu_numbers(self.ifits)
+        sci_hdu, msk_hdu, wgt_hdu = self.get_hdu_numbers()
         # Read in the Science, Mask and Weight Images array with fitsio, as we'll
         # need to write them out using fitsio once we are done with them
         self.SCI = self.ifits[sci_hdu].read()
@@ -266,6 +224,10 @@ class DESImage(object):
         ofits.close()
         print >>sys.stderr,"# Wrote: %s" % self.outname
 
+######################
+### Masker objects ###
+######################
+
 class BaseMasker(object):
     """
     Base class for defining image maskers. The basic tenents of
@@ -306,7 +268,7 @@ class BaseMasker(object):
         """ Return object arguments """
         if 'add_help' not in kwargs: kwargs['add_help']=False
 
-        parser = ArgumentParser(**kwargs)
+        parser = argparse.ArgumentParser(**kwargs)
         group = parser.add_argument_group(title)
         args = OrderedDict(cls.defaults)
         for key,value in args.items():
@@ -466,10 +428,10 @@ class CosmicMasker(BaseMasker):
             #self.fwhm  = get_FWHM(self.ifits,self.sci_hdu)
             self.fwhm  = self.image.get_FWHM()
             xsize = int(self.fwhm*9)
-            psf   = measAlg.DoubleGaussianPsf(xsize, xsize, self.fwhm/(2*math.sqrt(2*math.log(2))))
+            psf   = measAlg.DoubleGaussianPsf(xsize, xsize, self.fwhm/(2*np.sqrt(2*np.log(2))))
          
         # Interpolate bad pixels before finding CR to avoid false detections
-        fwhm = 2*math.sqrt(2*math.log(psf.computeShape().getDeterminantRadius()))
+        fwhm = 2*np.sqrt(2*np.log(psf.computeShape().getDeterminantRadius()))
         print "# Interpolating BPM/BAD pix mask" 
         ip_isr.isr.interpolateFromMask(self.mi, fwhm, growFootprints=0, maskName = 'BAD')
          
@@ -549,7 +511,7 @@ class StreakMasker(BaseMasker):
     """
 
     defaults = OrderedDict([
-        ['bkgfile'     , dict(help="Input background FITS file (fz/fits)")],
+        ['bkgfile'     , dict(required=True,help="Input background FITS file (fz/fits)")],
         ['draw'        , dict(action='store_true',help="Use matplotlib to draw diagnostic plots.")],
         ['template_dir', dict(default="/dev/null",help="Directory containing Hough template.")],
         # Image pre-processing
@@ -1481,7 +1443,6 @@ class StreakMasker(BaseMasker):
             raise ValueError("Cannot find IMAGE extension via DES_EXT in %s" %(infile))
      
         bkg = FITS[image_ext].read()
-        print "# Done..."
         FITS.close()
         return bkg
      
@@ -1536,31 +1497,110 @@ class StreakMasker(BaseMasker):
     def median_filter(data,factor=4):
         return percentile_filter(data,factor,q=50)
      
-     
-if __name__ == "__main__":
+###########################
+### Command-line Parser ###
+###########################
 
-    p = parser()
-    args = p.parse_args()
+def cmdline():
+    """
+    Command line parser and subcommand distribution.
+
+    returns:
+      parser : argparse.ArgumentParser object
+    """
+
+    formatter = argparse.RawDescriptionHelpFormatter
+    description = "Command-line tool for DECam image masking.\nType 'immask <subcommand> --help' for help on a specific subcommand.\nAll subcommands take filename and outname arguments.\nTo run all masking algorithms, use 'all' subcommand."
+    parser = argparse.ArgumentParser(description=description,
+                                     formatter_class=formatter)
+
+    formatter = argparse.ArgumentDefaultsHelpFormatter
+    general = argparse.ArgumentParser(formatter_class=formatter,add_help=False)
+    general.add_argument("filename", help="FITS/FZ file to process.")
+    general.add_argument("outname", help="Name of output FITS/FZ file.")
+    general.add_argument('-v','--verbose', action="count", help="Output verbosity")
+    general.add_argument('--compress', action="store_true", help="RICE/fpack compress output")
+    general.add_argument('--outdir',default="immask_out", help="Path to QA output files")
+
+    subparsers=parser.add_subparsers(dest='command',title='Available subcommands')
+
+    # Cosmic-ray masking subcommmand
+    title = 'cosmics'
+    description = "Mask cosmic rays using the LSST python framework."
+    cosmics = CosmicMasker.argparser(title,add_help=False)
+    subparser = subparsers.add_parser(title,description=description,
+                                      parents=[general,cosmics],
+                                      formatter_class=formatter,
+                                      help=description)
+    subparser.set_defaults(func=run_cosmics)
+
+    # Streak masking subcommand
+    title = 'streaks'
+    description = "Mask satellites, UFOs, etc. using Hough transform."
+    streaks = StreakMasker.argparser(title,add_help=False)
+    subparser = subparsers.add_parser(title,description=description,
+                                      parents=[general,streaks],
+                                      formatter_class=formatter,
+                                      help=description)
+    subparser.set_defaults(func=run_streaks)
+
+    # Add star masks here...
+    
+    # Add bleed trails here...
+
+    # Run all masking subcommands
+    title = 'all'
+    description = "Mask all image defects."
+    subparser = subparsers.add_parser(title,description=description,
+                                      parents=[general,cosmics,streaks],
+                                      formatter_class=formatter,
+                                      help=description)
+    subparser.set_defaults(func=run_all)
+    
+    return parser
+
+# ADW: This should be cleaned to reduce repetion
+def run_cosmics(args):
+    print '# Run %s...'%args.command
     kwargs = vars(args)
-
     image = DESImage(**kwargs)
     cosmics = CosmicMasker(image, **kwargs)
+    image.write()
+
+def run_streaks(args):
+    print '# Run %s...'%args.command
+    kwargs = vars(args)
+    image = DESImage(**kwargs)
     streaks = StreakMasker(image, **kwargs)
     image.write()
 
-    """
+def run_all(args):
+    print '# Run %s...'%args.command
+    kwargs = vars(args)
+    image = DESImage(**kwargs)
+    cosmics = CosmicMasker(image, **kwargs)
+    streaks = StreakMasker(image, **kwargs)
+    # In the future...
+    #stars = StarMasker(image, **kwargs)
+    #bleeds = BleedMasker(image, **kwargs)
+    image.write()
+
+# Format time
+def elapsed_time(t1,verb=False):
+    import time
+    t2    = time.time()
+    stime = "%dm %2.2fs" % ( int( (t2-t1)/60.), (t2-t1) - 60*int((t2-t1)/60.))
+    if verb:
+        print >>sys.stderr,"Elapsed time: %s" % stime
+    return stime
+     
+if __name__ == "__main__":
+
     # Get the start time
     t0 = time.time()
 
-    # Get the command line arguments
-    args = cmdline()
-    kwargs = vars(args)
-     
-    desobj = DESIMA(args.fileName,args.outdir)
-    # CR rejection
-    desobj.CRs(**kwargs)
-    # Streak masking
-    desobj.mask_streaks(**kwargs)
-    desobj.write(compress=args.compress)
+    parser = cmdline()
+    args = parser.parse_args()
+    args.func(args)
+
     print >>sys.stderr,"# Time:%s" % immask.elapsed_time(t0)
-    """
