@@ -88,8 +88,18 @@ class DESImage(object):
     """
 
     # Should not require outname and outdir
-    def __init__(self, filename, outname=None, outdir=None):
+    def __init__(self, filename, outname, outdir, **kwargs):
         self.filename  = self.extract_filename(filename)
+        self.outname   = self.extract_filename(outname)
+
+        ### # ADW: This is improperly placed, since 'outdir'
+        ### # refers to the QA outdir for the maskers, not the image.
+        ### # Perhaps this requires a set of 'general' options
+        self.outdir    = outdir
+
+        # Decide whether output should be compressed
+        self.compress  = kwargs.get('compress',False)
+
 
         # Gets SCI, MSK, WGT and created VAR
         self.read()
@@ -113,16 +123,16 @@ class DESImage(object):
     def __str__(self):
         return str(self.ifits)
 
-    @classmethod
-    def extract_filename(cls,filename):
+    @staticmethod
+    def extract_filename(filename):
         """ Safe extraction of filename """
         if filename[0] == "!": filename=filename[1:]
         filename = os.path.expandvars(filename)
         filename = os.path.expanduser(filename)
         return filename
 
-    @classmethod
-    def get_hdu_numbers(cls,FITS):
+    @staticmethod
+    def get_hdu_numbers(FITS):
         """
         Simple function to figure the HDU extensions for DESDM fits files
         in:  a fitsio.FITS object
@@ -145,10 +155,10 @@ class DESImage(object):
          
         return sci_ext,msk_ext,wgt_ext
 
-    @classmethod
-    def get_FWHM(cls,FITS,sci_hdu):
+    def get_FWHM(self):
        """ Get the FHWM of the image in pixels. """
-     
+       FITS = self.ifits
+       sci_hdu = self.sci_hdu
        header = FITS[sci_hdu].read_header()
        # Read in the pixelscale
        try:
@@ -229,13 +239,11 @@ class DESImage(object):
         if not self.compress and extname == '.fz':
             raise IOError ("--compress not specified with '.fz' outfile")
 
-    def write(self, **kwargs):
+    def write(self):
         """
         Use fitsio to write the output file compressed or not
         """
 
-        # Decide if compress, that will define the fileName, compression type and tile_dims
-        self.compress  = kwargs.get('compress',None)
         # Define type of compresion and tile_dims
         if self.compress:
             self.compress  = 'RICE'
@@ -272,11 +280,21 @@ class BaseMasker(object):
     def __init__(self, image, **kwargs):
         """ Create and run the masker """
         self.image = image
+
+        # ADW: It'd probably be better to do this in 'write'
+        if not os.path.exists(self.image.outdir):
+            print "# Creating output directory  %s" % self.image.outdir
+            os.mkdir(self.image.outdir)
+
         self._parse(**kwargs)
         self.run()
 
     def run(self):
         """ Run the masking routines """
+        pass
+
+    def write(self):
+        """ Write the masker QA files """
         pass
         
     def _parse(self, **kwargs):
@@ -299,14 +317,14 @@ class CosmicMasker(BaseMasker):
 
     ### Command line arguments for cosmic-ray masking
     defaults = OrderedDict([
-            ['interpCR'  , dict(default=True, action="store_true", help="Interpolate CR in science image.")],
-            ['noInterpCR', dict(action="store_true", help="Do not Interpolate CR in Science image.")],
-            ['dilateCR'  , dict(action="store_true", help="Dilate CR mask by 1 pixel.")],
-            ['nGrowCR'   , dict(default=1, type=int, help="Dilate CR mask by nGrowCR pixels.")],
-            ['fwhm'      , dict(default=None, type=float, help="Set a FWHM [pixels] value that overrides the header FWHM value in image")],
-            ['minSigma'  , dict(default=5.0, type=float, help="CRs must be > this many sky-sig above sky")],
-            ['min_DN'    , dict(default=150, type=int, help="CRs must have > this many DN (== electrons/gain) in initial detection")],
-            ])
+        ['interpCR'  , dict(default=True, action="store_true", help="Interpolate CR in science image.")],
+        ['noInterpCR', dict(action="store_true", help="Do not Interpolate CR in Science image.")],
+        ['dilateCR'  , dict(action="store_true", help="Dilate CR mask by 1 pixel.")],
+        ['nGrowCR'   , dict(default=1, type=int, help="Dilate CR mask by nGrowCR pixels.")],
+        ['fwhm'      , dict(default=None, type=float, help="Set a FWHM [pixels] value that overrides the header FWHM value in image")],
+        ['minSigma'  , dict(default=5, type=float, help="CRs must be > this many sky-sig above sky")],
+        ['min_DN'    , dict(default=150, type=int, help="CRs must have > this many DN (== electrons/gain) in initial detection")],
+        ])
 
     def run(self):
         """
@@ -426,7 +444,7 @@ class CosmicMasker(BaseMasker):
             self.image.OUT_WGT[cr_prev] = median_rep # The original array
             print "# Fixing mask plane for those CR-pixels too " 
             self.mska[cr_prev]    = self.mska[cr_prev]    - 16 # The LSST handle
-            self.image.OUT_MSK[cr_prev] = self.OUT_MSK[cr_prev] - 16 # The original array
+            self.image.OUT_MSK[cr_prev] = self.image.OUT_MSK[cr_prev] - 16 # The original array
         # ************************************************************
         # Make an LSST masked image (science, mask, and weight) 
         self.mi = afwImage.makeMaskedImage(self.sci, self.msk, self.var)
@@ -445,7 +463,8 @@ class CosmicMasker(BaseMasker):
         # Estimate the PSF of the science image.
         if not self.fwhm:
             print "# Will attempt to get FWHM from the image header"
-            self.fwhm  = get_FWHM(self.ifits,self.sci_hdu)
+            #self.fwhm  = get_FWHM(self.ifits,self.sci_hdu)
+            self.fwhm  = self.image.get_FWHM()
             xsize = int(self.fwhm*9)
             psf   = measAlg.DoubleGaussianPsf(xsize, xsize, self.fwhm/(2*math.sqrt(2*math.log(2))))
          
@@ -463,7 +482,7 @@ class CosmicMasker(BaseMasker):
         crConfig             = measAlg.FindCosmicRaysConfig()
         crConfig.minSigma    = self.minSigma
         crConfig.min_DN      = self.min_DN
-        crConfig.nCrPixelMax = int(self.nx*self.ny/3) # 1e6 will not work, needs an integer
+        crConfig.nCrPixelMax = int(self.image.nx*self.image.ny/3) # 1e6 will not work, needs an integer
         if self.interpCR:
             crConfig.keepCRs  = False # Do interpolate
             print "# Will erase detected CRs -- interpolate CRs on SCI image"
@@ -531,15 +550,15 @@ class StreakMasker(BaseMasker):
 
     defaults = OrderedDict([
         ['bkgfile'     , dict(help="Input background FITS file (fz/fits)")],
-        ['draw'        , dict(action='store_true', help="Use matplotlib to draw diagnostic plots.")],
+        ['draw'        , dict(action='store_true',help="Use matplotlib to draw diagnostic plots.")],
         ['template_dir', dict(default="/dev/null",help="Directory containing Hough template.")],
         # Image pre-processing
         ['bin_factor'   , dict(default=8, type=int, help="Binning factor to beat down sky noise")],
         # For detection, merging, and characterization
         ['nsig_sky'     , dict(default=1.5,type=float,help="Threshold for sky noise") ],
         ['nsig_detect'  , dict(default=14.,type=float,help="Threshold for Hough peak detection") ],
-        ['nsig_merge'   , dict(default=8., type=float,help="Threshold for Hough peak merging ")],
-        ['nsig_mask'    , dict(default=8., type=float,help="Threshold for Hough peak characterization")],
+        ['nsig_merge'   , dict(default=8.,type=float,help="Threshold for Hough peak merging ")],
+        ['nsig_mask'    , dict(default=8.,type=float,help="Threshold for Hough peak characterization")],
         # Quality cuts
         ['max_width'    , dict(default=150.,type=float,help="Maximum width in (pix)")],
         ['max_angle'    , dict(default=15., type=float,help="Maximum angular extent (deg)")],
@@ -550,11 +569,11 @@ class StreakMasker(BaseMasker):
         ['clip_range'   , dict(default=10., type=float,help="Allowed clip angle range (deg); >90 to accept all angles")],
         # For masking
         ['mask_factor'  , dict(default=1.5, type=float, help="Factor to increase streak width for masking")],
-        ['maskbits'     , dict(default=1023,type=int, help="Ignore these mask bits ")],
-        ['setbit'       , dict(default=1024,type=int, help="New streak mask bit")],
-        ['maxmask'      , dict(default=1000,type=int, help="Maximum number of streaks to mask [NOT IMPLEMENTED]")],
+        ['maskbits'     , dict(default=1023,type=int,help="Ignore these mask bits ")],
+        ['setbit'       , dict(default=1024,type=int,help="New streak mask bit")],
+        ['maxmask'      , dict(default=1000,type=int,help="Maximum number of streaks to mask [NOT IMPLEMENTED]")],
         # Streak objects
-        ['write_streaks', dict(default=False, action="store_true", help="Write out streak objects")],
+        ['write_streaks', dict(action="store_true", help="Write out streak objects")],
         ])
 
     def run(self):
@@ -628,7 +647,7 @@ class StreakMasker(BaseMasker):
          
         # Detection statistics
         print "# Calculating detection statistics..."
-        self.detect_objs = streak_statistics(self.trans, self.rho, self.theta, good, rev)
+        self.detect_objs = self.streak_statistics(self.trans, self.rho, self.theta, good, rev)
         self.detect_objs['BINNING'][:] = self.bin_factor
          
         # Make some preliminary quality cuts
@@ -644,7 +663,7 @@ class StreakMasker(BaseMasker):
         # Merge nearby lines
         merge_label,merge_nlabel = ndimage.label(self.trans > self.nsig_merge,structure=self.structure)
         if merge_nlabel:
-            hist,edges,rev = idl_histogram(merge_label,bins=np.arange(merge_nlabel+2))
+            hist,edges,rev = self.idl_histogram(merge_label,bins=np.arange(merge_nlabel+2))
             good = []
             for obj in self.detect_objs[self.detect_objs['CUT']==0]:
                 lab = merge_label[obj['MAX_Y0'],obj['MAX_X0']]
@@ -657,7 +676,7 @@ class StreakMasker(BaseMasker):
             rev,unique = [],[]
          
         print "# Calculating merging statistics..."
-        merge_objs = streak_statistics(self.trans, self.rho, self.theta, unique, rev)
+        merge_objs = self.streak_statistics(self.trans, self.rho, self.theta, unique, rev)
         merge_objs['BINNING'][:] = self.bin_factor
          
         # More quality cuts
@@ -674,7 +693,7 @@ class StreakMasker(BaseMasker):
         # Masking threshold
         self.mask_label,mask_nlabel = ndimage.label(self.trans > self.nsig_mask,structure=self.structure)
         if mask_nlabel:
-            hist,edges,rev = idl_histogram(self.mask_label,bins=np.arange(mask_nlabel+2))
+            hist,edges,rev = self.idl_histogram(self.mask_label,bins=np.arange(mask_nlabel+2))
             good = []
             
             for obj in merge_objs[merge_objs['CUT']==0]:
@@ -695,8 +714,8 @@ class StreakMasker(BaseMasker):
          
         # Create the mask from the streaks
         print "# Masking %i streaks"%(len(self.mask_objs))
-        streak_mask = np.zeros(self.OUT_MSK.shape,dtype=self.OUT_MSK.dtype)
-        wcs = wcsutil.WCS(self.h_sci)
+        streak_mask = np.zeros(self.image.OUT_MSK.shape,dtype=self.image.OUT_MSK.dtype)
+        wcs = wcsutil.WCS(self.image.h_sci)
         for i,obj in enumerate(self.mask_objs):
             slope  = obj['SLOPE']
             inter1 = obj['INTER1']
@@ -704,18 +723,18 @@ class StreakMasker(BaseMasker):
             # Print intercept in original image coordinates
             print "#  %i   NSIG=%g, SLOPE=%g, INTER1=%g, INTER2=%g"%(i,obj['MAX'],slope,inter1*self.bin_factor,inter2*self.bin_factor)
           
-            tmp_mask = np.zeros(self.searchIm.shape,dtype=self.OUT_MSK.dtype)
-            tmp_mask = mask_between(tmp_mask,slope,inter1,inter2,self.mask_factor)
+            tmp_mask = np.zeros(self.searchIm.shape,dtype=self.image.OUT_MSK.dtype)
+            tmp_mask = self.mask_between(tmp_mask,slope,inter1,inter2,self.mask_factor)
           
             clip = np.abs(np.abs(np.degrees(np.arctan(slope)))-self.clip_angle) < self.clip_range
             if self.clip and clip:
                 print "# Examining streak for clipping..."
-                tmp_mask = clip_mask(self.searchIm,self.masked,tmp_mask,slope,self.nsig_clip)
+                tmp_mask = self.clip_mask(self.searchIm,self.masked,tmp_mask,slope,self.nsig_clip)
           
             # Move to original resolution
             tmp_mask = tmp_mask.repeat(self.bin_factor,axis=0).repeat(self.bin_factor,axis=1)
             # Smooth binning artifacts
-            vertices = create_rectangle(tmp_mask,slope)
+            vertices = self.create_rectangle(tmp_mask,slope)
             obj['CORNERS'][:] = vertices
           
             #vertices_wcs = np.vstack(self.image_to_wcs(vertices[:,0],vertices[:,1])).T 
@@ -723,7 +742,7 @@ class StreakMasker(BaseMasker):
             obj['CORNERS_WCS'][:] = vertices_wcs
           
             # Move to the full resolution mask
-            streak_mask |= mask_polygon(streak_mask,vertices)
+            streak_mask |= self.mask_polygon(streak_mask,vertices)
             
             #streak_mask |= mask_between(streak_mask,slope,inter1*self.bin_factor,inter2*self.bin_factor,self.mask_factor)
          
@@ -741,6 +760,31 @@ class StreakMasker(BaseMasker):
         # Write streak objects
         if self.write_streaks:
             self.write_streak_objects() 
+
+    def write_streak_objects(self):
+        basename = os.path.basename(self.image.outname)
+        outbase = basename.split('.fit')[0]+'_streaks.fits'
+        outname = os.path.join(self.image.outdir,outbase)
+
+        #logger.info("Writing objects: %s" % (objsfile))
+        print "# Writing streak objects: %s" % (outname)
+        fitsio.write(outname,self.mask_objs,clobber=True)
+  
+    def write_streak_mask(self):
+        basename = os.path.basename(self.image.outname)
+        outbase = basename.split('.fit')[0]+'_mask.fits'
+        outname = os.path.join(self.image.outdir,outbase)
+
+        print "# Writing streak mask: %s" % (outname)
+        
+        maskonly = np.zeros(self.image.OUT_MSK.shape,dtype=self.image.OUT_MSK.dtype)
+        test = np.where((self.image.OUT_MSK & self.setbit) > 0)
+        maskonly[test[0],test[1]] = self.setbit
+   
+        # Write mask as float32 so that "ds9 -mask" reads properly
+        header = copy.copy(self.image.h_msk)
+        header['BZERO'] = 0 
+        fitsio.write(outname,maskonly.astype('f4'),header=header,clobber=True)
   
     def draw_plots(self):
         """
@@ -788,9 +832,9 @@ class StreakMasker(BaseMasker):
         for obj in self.mask_objs:
             y1 = obj['SLOPE']*x+obj['INTER1']; plt.plot(x,y1,'--w')
             y2 = obj['SLOPE']*x+obj['INTER2']; plt.plot(x,y2,'--w')
-        if (self.OUT_MSK & self.setbit).sum():
+        if (self.image.OUT_MSK & self.setbit).sum():
             plt.sca(axes[2]) 
-            bin_mask = bin_pixels(self.OUT_MSK & self.setbit,self.bin_factor).astype(bool)
+            bin_mask = self.bin_pixels(self.image.OUT_MSK & self.setbit,self.bin_factor).astype(bool)
             bin_mask = np.ma.array(bin_mask,mask=(bin_mask==0))
             cmap = matplotlib.cm.binary; cmap.set_bad('k',0)
             plt.imshow(bin_mask,origin='bottom',alpha=0.5,cmap=cmap)
@@ -1142,7 +1186,7 @@ class StreakMasker(BaseMasker):
         chunk_size = 100
         nchunks = ncounts/chunk_size
         bins = np.linspace(xmin,xmax,nchunks+1,endpoint=True)
-        hist,edges,rev = idl_histogram(xpixp, bins=bins)
+        hist,edges,rev = self.idl_histogram(xpixp, bins=bins)
      
         # Clip all chunks that are low by 'nsig_clip'
         # Loop through and identify chunks for clipping
@@ -1406,9 +1450,7 @@ class StreakMasker(BaseMasker):
      
         return skymod,sigma,skew
 
-
-
-    # These are general helper methods without any strong
+    # These are more general helper methods without any strong
     # association to StreakMasker. They could easily be
     # moved to some utility module.
 
@@ -1499,10 +1541,13 @@ if __name__ == "__main__":
 
     p = parser()
     args = p.parse_args()
-    
-    image = DESImage(args.filename,args.outname,args.outdir)
+    kwargs = vars(args)
 
-    streaks = StreakMasker(image, **vars(args))
+    image = DESImage(**kwargs)
+    cosmics = CosmicMasker(image, **kwargs)
+    streaks = StreakMasker(image, **kwargs)
+    image.write()
+
     """
     # Get the start time
     t0 = time.time()
