@@ -44,41 +44,25 @@ class DESImage(object):
     """
 
     # Should not require outname and outdir
-    def __init__(self, filename, outname, outdir, **kwargs):
+    def __init__(self, filename, outname, **kwargs):
         self.filename  = self.extract_filename(filename)
         self.outname   = self.extract_filename(outname)
 
-        ### # ADW: This is improperly placed, since 'outdir'
-        ### # refers to the QA outdir for the maskers, not the image.
-        ### # Perhaps this requires a set of 'general' options
-        self.outdir    = outdir
-
         # Decide whether output should be compressed
         self.compress  = kwargs.get('compress',False)
-
 
         # Gets SCI, MSK, WGT and created VAR
         self.read()
         # Make shallow copies of HDUs and created VAR (OUT_*)
         self.copy_ndarrays() 
 
-        ### self.outname   = self.extract_filename(outname)
-        ### self.outdir    = outdir
-        ###  
-        ### # Make sure the output directory exits
-        ### # ADW: This is improperly placed, since 'outdir'
-        ### # refers to the QA outdir for the maskers, not the image.
-        ### # Perhaps this requires a set of 'general' options
-        ### if not os.path.exists(self.outdir):
-        ###     print "# Will create output directory  %s" % self.outdir
-        ###     os.mkdir(self.outdir)
-        
     def __repr__(self):
         return repr(self.ifits)
 
     def __str__(self):
         return str(self.ifits)
 
+    # This could be moved to a utils module
     @staticmethod
     def extract_filename(filename):
         """ Safe extraction of filename """
@@ -86,7 +70,6 @@ class DESImage(object):
         filename = os.path.expandvars(filename)
         filename = os.path.expanduser(filename)
         return filename
-
 
     def get_hdu_numbers(self):
         """
@@ -239,14 +222,14 @@ class BaseMasker(object):
 
     defaults = OrderedDict([])
 
-    def __init__(self, image, **kwargs):
+    def __init__(self, image, outdir, **kwargs):
         """ Create and run the masker """
         self.image = image
+        self.outdir = outdir
 
-        # ADW: It'd probably be better to do this in 'write'
-        if not os.path.exists(self.image.outdir):
-            print "# Creating output directory  %s" % self.image.outdir
-            os.mkdir(self.image.outdir)
+        if not os.path.exists(self.outdir):
+            print "# Creating output directory  %s" % self.outdir
+            os.mkdir(self.outdir)
 
         self._parse(**kwargs)
         self.run()
@@ -265,7 +248,9 @@ class BaseMasker(object):
 
     @classmethod
     def argparser(cls, title, **kwargs):
-        """ Return object arguments """
+        """ 
+        Fill ArgumentParser with class defaults as optional arguments.
+        """
         if 'add_help' not in kwargs: kwargs['add_help']=False
 
         parser = argparse.ArgumentParser(**kwargs)
@@ -425,7 +410,6 @@ class CosmicMasker(BaseMasker):
         # Estimate the PSF of the science image.
         if not self.fwhm:
             print "# Will attempt to get FWHM from the image header"
-            #self.fwhm  = get_FWHM(self.ifits,self.sci_hdu)
             self.fwhm  = self.image.get_FWHM()
             xsize = int(self.fwhm*9)
             psf   = measAlg.DoubleGaussianPsf(xsize, xsize, self.fwhm/(2*np.sqrt(2*np.log(2))))
@@ -726,7 +710,7 @@ class StreakMasker(BaseMasker):
     def write_streak_objects(self):
         basename = os.path.basename(self.image.outname)
         outbase = basename.split('.fit')[0]+'_streaks.fits'
-        outname = os.path.join(self.image.outdir,outbase)
+        outname = os.path.join(self.outdir,outbase)
 
         #logger.info("Writing objects: %s" % (objsfile))
         print "# Writing streak objects: %s" % (outname)
@@ -757,7 +741,7 @@ class StreakMasker(BaseMasker):
         # Get the drawbase name
         basename      = os.path.basename(self.image.filename)
         outbase       = os.path.splitext(os.path.splitext(basename)[0])[0] # double split for '.fits.fz' files
-        drawbase = os.path.join(self.image.outdir,outbase)
+        drawbase = os.path.join(self.outdir,outbase)
          
         # The sky noise
         pngfile = "%s_sky.png" % drawbase
