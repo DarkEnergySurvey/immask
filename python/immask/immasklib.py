@@ -1587,4 +1587,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     args.func(args)
 
-    print >>sys.stderr,"# Time:%s" % immask.elapsed_time(t0)
+    print >>sys.stderr,"# Time:%s" % elapsed_time(t0)
