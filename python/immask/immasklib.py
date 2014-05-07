@@ -108,7 +108,9 @@ class DESIMA:
                                        help="Maximum number of streaks to mask [NOT IMPLEMENTED]")
     # Streak objects
     STREAK_ARGS['write_streaks']= dict(action="store_true", default=False,
-                                       help="Write out streak objects") 
+                                       help="Write out streak objects")
+    STREAK_ARGS['streaksfile']  = dict(help="Output streak objects FITS file",default=False)
+    
 
     def __init__ (self, fileName, outName, outdir, **kwargs):
         self.fileName  = extract_filename(fileName)
@@ -721,9 +723,13 @@ class DESIMA:
         print >>sys.stderr,"# Wrote: %s" % self.outName
   
     def write_streak_objects(self):
-        baseName = os.path.basename(self.outName)
-        outBase = baseName.split('.fit')[0]+'_streaks.fits'
-        outName = os.path.join(self.outdir,outBase)
+
+        if self.streaksfile:
+            outName = self.streaksfile
+        else:
+            baseName = os.path.basename(self.outName)
+            outBase = baseName.split('.fit')[0]+'_streaks.fits'
+            outName = os.path.join(self.outdir,outBase)
         #logger.info("Writing objects: %s" % (objsfile))
         print "# Writing streak objects: %s" % (outName)
         fitsio.write(outName,self.mask_objs,clobber=True)
