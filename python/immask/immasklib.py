@@ -804,7 +804,7 @@ def read_bkg_image(bkgfile):
     FITS.close()
     return bkg
 
-def mmm(sky_vector, mxiter=30):
+def mmm(sky_vector, mxiter=50, atol=1e-10):
 
     """
     Robust sky fitting from IDL astronomy library.
@@ -813,11 +813,11 @@ def mmm(sky_vector, mxiter=30):
     Parameters:
     sky_vector : flat vector of sky-background level
     mxiter     : maximum iterations of the fitter
+    atol       : absolute tolerance on value of skymod
     Returns:
     sky_fit    : tuple of (skymod, sigma, skew)
     """
 
-    #mxiter = 30
     minsky = 20
     nsky=sky_vector.size
 
@@ -874,10 +874,12 @@ def mmm(sky_vector, mxiter=30):
             raise Exception("Too few valid sky elements")
             return np.array(-1.0),np.array(-1.0),np.array(-1.0)
 
+        # Compute Chauvenet rejection criterion.
         r = np.log10((maximm-minimm).astype(np.float32))
         # What is this...?
         r = max([2.,(-0.1042*r+1.1695)*r + 0.8895])
 
+        # Compute rejection limits (symmetric about the current mode).
         cut = r*sigma + 0.5*abs(skymn-skymod)
         # integer data?
         if (integer) :
@@ -885,6 +887,8 @@ def mmm(sky_vector, mxiter=30):
         cut1 = skymod - cut
         cut2 = skymod + cut
 
+        # Recompute mean and sigma by adding and/or subtracting sky values
+        # at both ends of the interval of acceptable values.
         redo = False
         newmin=minimm
         tst_min = sky[newmin+1] >= cut1
@@ -952,10 +956,15 @@ def mmm(sky_vector, mxiter=30):
         else :
             dmod = skymn - skymod
 
+        # prevent oscillations by clamping down if sky adjustments are changing sign
         if dmod*old < 0 :
             clamp = 0.5*clamp
         skymod = skymod + clamp*dmod
         old=dmod
+
+        # Check if change to skymod less than tolerance
+        if abs(clamp*dmod) < atol:
+            redo = False
 
     skew = (skymn-skymod).astype(np.float32)/max([1.,sigma])
     nsky=maximm-minimm
