@@ -26,7 +26,7 @@ import scipy.ndimage as ndimage
 from scipy.optimize import fmin
 from scipy.spatial  import cKDTree
 import matplotlib
-matplotlib.use('Agg')
+#matplotlib.use('Agg')
 import matplotlib.path
 
 from despyutils import wcsutil
@@ -550,6 +550,11 @@ class StreakMasker(BaseMasker):
             print "# Binning image by a factor of %s..."% self.bin_factor
             self.subIm  = self.bin_pixels(self.subIm,self.bin_factor)
             self.masked = np.ceil(self.bin_pixels(self.masked,self.bin_factor)).astype(bool)
+
+        import pylab as plt
+        fig, axes = plt.subplots(1, 2)
+        axes[0].imshow(self.subIm)
+        axes[1].imshow(self.masked)
            
         # Calculate sky noise
         print "# Measuring sky noise..."
@@ -1238,7 +1243,7 @@ class StreakMasker(BaseMasker):
 
 
     @staticmethod
-    def mmm(sky_vector, mxiter=30):
+    def mmm(sky_vector, mxiter=50, tol=1e-10):
      
         """
         Robust sky fitting from IDL astronomy library.
@@ -1247,11 +1252,11 @@ class StreakMasker(BaseMasker):
         Parameters:
         sky_vector : flat vector of sky-background level
         mxiter     : maximum iterations of the fitter
+        atol       : absolute tolerance on value of skymod
         Returns:
         sky_fit    : tuple of (skymod, sigma, skew)
         """
      
-        #mxiter = 30
         minsky = 20
         nsky=sky_vector.size
      
@@ -1282,7 +1287,7 @@ class StreakMasker(BaseMasker):
      
         maximm = good.max()
         minimm = good.min() - 1
-     
+
         skymed = 0.5*sky[(minimm+maximm+1)/2] + 0.5*sky[(minimm+maximm)/2+1]
         skymn = sum/(maximm-minimm)
         sigma = np.sqrt(sumsq/(maximm-minimm)-np.square(skymn))
@@ -1292,7 +1297,7 @@ class StreakMasker(BaseMasker):
             skymod = 3.*skymed - 2.*skymn
         else :
             skymod = skymn
-     
+
         # rejection and computation loop
         niter = 0
         clamp = 1
@@ -1308,10 +1313,12 @@ class StreakMasker(BaseMasker):
                 raise Exception("Too few valid sky elements")
                 return np.array(-1.0),np.array(-1.0),np.array(-1.0)
      
+            # Compute Chauvenet rejection criterion.
             r = np.log10((maximm-minimm).astype(np.float32))
             # What is this...?
             r = max([2.,(-0.1042*r+1.1695)*r + 0.8895])
      
+            # Compute rejection limits (symmetric about the current mode).
             cut = r*sigma + 0.5*abs(skymn-skymod)
             # integer data?
             if (integer) :
@@ -1319,6 +1326,8 @@ class StreakMasker(BaseMasker):
             cut1 = skymod - cut
             cut2 = skymod + cut
      
+            # Recompute mean and sigma by adding and/or subtracting sky values
+            # at both ends of the interval of acceptable values.
             redo = False
             newmin=minimm
             tst_min = sky[newmin+1] >= cut1
@@ -1362,7 +1371,7 @@ class StreakMasker(BaseMasker):
                 sumsq = sumsq + istep*np.square(delta).sum()
                 redo = True
                 maximm=newmax
-     
+
             nsky=maximm-minimm
             if (nsky < minsky) :
                 raise Exception("Outlier rejection rejected too many sky elements")
@@ -1386,11 +1395,16 @@ class StreakMasker(BaseMasker):
             else :
                 dmod = skymn - skymod
      
+            # prevent oscillations by clamping down if sky adjustments are changing sign
             if dmod*old < 0 :
                 clamp = 0.5*clamp
             skymod = skymod + clamp*dmod
             old=dmod
-     
+
+            # Check if change to skymod less than tolerance
+            if abs(clamp*dmod) < atol:
+                redo = False
+
         skew = (skymn-skymod).astype(np.float32)/max([1.,sigma])
         nsky=maximm-minimm
      
