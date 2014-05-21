@@ -519,7 +519,8 @@ class StreakMasker(BaseMasker):
         ['setbit'       , dict(default=1024,type=int,help="New streak mask bit")],
         ['maxmask'      , dict(default=1000,type=int,help="Maximum number of streaks to mask [NOT IMPLEMENTED]")],
         # Streak objects
-        ['write_streaks', dict(action="store_true", help="Write out streak objects")],
+        ['write_streaks', dict(action="store_true",help="Write out streak objects")],
+        ['streaksfile', dict(default=False,help="Output streak objects FITS file")]
         ])
 
     def run(self):
@@ -713,9 +714,12 @@ class StreakMasker(BaseMasker):
             self.write_streak_objects() 
 
     def write_streak_objects(self):
-        basename = os.path.basename(self.image.outname)
-        outbase = basename.split('.fit')[0]+'_streaks.fits'
-        outname = os.path.join(self.outdir,outbase)
+        if self.streaksfile:
+            outName = self.streaksfile
+        else:
+            basename = os.path.basename(self.image.outname)
+            outbase = basename.split('.fit')[0]+'_streaks.fits'
+            outname = os.path.join(self.outdir,outbase)
 
         #logger.info("Writing objects: %s" % (objsfile))
         print "# Writing streak objects: %s" % (outname)
@@ -1243,7 +1247,7 @@ class StreakMasker(BaseMasker):
 
 
     @staticmethod
-    def mmm(sky_vector, mxiter=50, tol=1e-10):
+    def mmm(sky_vector, mxiter=50, atol=1e-10):
      
         """
         Robust sky fitting from IDL astronomy library.

@@ -3,11 +3,11 @@ from distutils.core import setup
 
 # The main call
 setup(name='immask',
-      version ='0.2.0',
+      version ='0.3.0',
       license = "GPL",
       description = "The Image Masking Module for DESDM.",
-      author = "Felipe Menanteau",
-      author_email = "felipe@illinois.edu",
+      author = "Felipe Menanteau, Alex Drlica-Wagner, Eli Rykoff",
+      author_email = "felipe@illinois.edu, kadrlica@fnal.gov, erykoff@slac.stanford.edu",
       packages = ['immask'],
       package_dir = {'': 'python'},
       scripts = ['bin/immask',
