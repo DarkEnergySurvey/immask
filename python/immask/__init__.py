@@ -1,10 +1,9 @@
 __author__  = "Felipe Menanteau"
-__version__ = '0.2.1'
+__version__ = '0.2.0-br0'
 version = __version__
 
 """
- The DESDM immask module, masking cosmic ray and streaks on
- single-frame CCDs for now.
+The DESDM single-CCD image masking module.
 
 $Id$
 $Rev::                                  $:  # Revision of last commit.
@@ -13,9 +12,10 @@ $LastChangedDate::                      $:  # Date of last commit.
 """
 
 from . import immasklib
-from .immasklib import DESIMA
-from .immasklib import elapsed_time
 from .immasklib import cmdline
+from .immasklib import elapsed_time
+
+#from .immasklib import DESIMA
 
 # Other ways... not really used
 # CR masking routine only
