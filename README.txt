@@ -15,15 +15,26 @@ To install locally in $HOME:
 
  %> python setup.py install --home=$HOME/Python
  
-To run:
-
- %> bin/immask DECam_00226647_47.fits.fz clean_DECam_00226647_47.fits  --bkgfile DECam_00226647_47_bkg.fits.fz 
- %> bin/immask DECam_00226647_47.fits    clean_DECam_00226647_47.fits  --bkgfile DECam_00226647_47_bkg.fits.fz 
+To run streaks:
+ %> bin/immask streaks DECam_00226647_47.fits.fz clean_DECam_00226647_47.fits  --bkgfile DECam_00226647_47_bkg.fits.fz 
+To run cosmic rays:
+ %> bin/immask cosmics DECam_00226647_47.fits.fz clean_DECam_00226647_47.fits 
+To run everything:
+ %> bin/immask all     DECam_00226647_47.fits.fz clean_DECam_00226647_47.fits  --bkgfile DECam_00226647_47_bkg.fits.fz 
 
 To generate an fpacked output image:
 
- %> bin/immask DECam_00226647_47.fits.fz clean_DECam_00226647_47.fits.fz --bkgfile DECam_00226647_47_bkg.fits.fz --compress
+ %> bin/immask all DECam_00226647_47.fits.fz clean_DECam_00226647_47.fits.fz --bkgfile DECam_00226647_47_bkg.fits.fz --compress
 
-to see all options:
+To see options:
 
- %> bin/immask --help
+ %> bin/immask <subcommand> --help
+
+
+To Do:
+- Load bad pixel bit mask directly from imsupport
+- More extensive method documentation.
+- Add decorator for masker class containing defaults.
+- Re-introduce python logging instead of print statements (and tie to --verbose).
+- Re-factor 'immasklib' into 'image' and 'masker' files.
+- Clean up conflict between '--compress' and '.fz' file endings.
