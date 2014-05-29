@@ -20,6 +20,7 @@ import time
 import copy
 import argparse
 from collections import OrderedDict
+import logging
 
 import numpy as np
 import scipy.ndimage as ndimage
@@ -32,6 +33,39 @@ import matplotlib.path
 from despyutils import wcsutil
 from pyhough.pyhough_lib import Hough
 
+
+######################
+### Python Logging ###
+######################
+class ImmaskFormatter(logging.Formatter):
+    """
+    Class for overloading log formatting based on level.
+    """
+    FORMATS = {'DEFAULT'       : "IMMASK: %(message)s",
+               logging.DEBUG   : "IMMASK::DEBUG: %(message)s",
+               logging.WARNING : "IMMASK::WARNING: %(message)s",
+               logging.ERROR   : "IMMASK::ERROR: %(message)s"}
+
+    def format(self, record):
+        self._fmt = self.FORMATS.get(record.levelno, self.FORMATS['DEFAULT'])
+        return logging.Formatter.format(self, record)
+
+def create_logger(level=logging.NOTSET):
+    """
+    Configure the logger with a custom formatter and set level.
+
+    Parameters:
+      level  : Level of the logger [int]
+    Returns:
+      logger
+    """
+    logger  = logging.getLogger()
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(ImmaskFormatter())
+    logger.addHandler(handler)
+    logger.setLevel(level)
+    return logger
+    
 
 #####################
 ### Image objects ###
@@ -106,8 +140,7 @@ class DESImage(object):
            pixscale = header['PIXSCAL1']
        except:
            pixscale = 0.27
-           print "# WARNING: Could not read PIXSCAL1 keyword from Science HDU"
-           print "# WARNING: Will default to %s" % pixscale
+           logging.warning("Could not read PIXSCAL1 keyword from Science HDU\nWill default to %s" % pixscale)
      
        # Read in the FWHM
        try:
@@ -116,12 +149,11 @@ class DESImage(object):
        except:
            fwhm = 5.5
            fwhm_arcsec = fwhm*pixscale
-           print "# WARNING: Could not read FWHM keyword from Science HDU"
-           print "# WARNING: Will use FWHM=%s pixels instead" % fwhm
+           logging.warning("Could not read FWHM keyword from Science HDU\nWill use FWHM=%s pixels instead" % fwhm)
      
        # Into arcseconds
        if fwhm_arcsec > 1.2:
-           print "# WARNING: Header FWHM value: %.2f[arcsec] / %.1f[pixels] is too high -- should not be trusted" % (fwhm_arcsec,fwhm)
+           logging.warning("Header FWHM value: %.2f[arcsec] / %.1f[pixels] is too high -- should not be trusted" % (fwhm_arcsec,fwhm))
           
        return fwhm
 
@@ -131,7 +163,7 @@ class DESImage(object):
         using fitsio.
         """
         # Get the fitsio element -- we'll modify this in place
-        print "# Reading in extensions and headers for %s" % self.filename
+        logging.info("Reading in extensions and headers for %s" % self.filename)
         self.ifits = fitsio.FITS(self.filename,'r')
         sci_hdu, msk_hdu, wgt_hdu = self.get_hdu_numbers()
         # Read in the Science, Mask and Weight Images array with fitsio, as we'll
@@ -149,7 +181,7 @@ class DESImage(object):
         self.sci_hdu = sci_hdu
         self.msk_hdu = msk_hdu
         self.wgt_hdu = wgt_hdu
-        print "# Done reading HDU "
+        logging.info("Done reading HDU")
   
     def copy_ndarrays(self):
         """
@@ -158,7 +190,7 @@ class DESImage(object):
         information of the fits files. We need to do this before they
         are modified in place by the the LSST framework functions.
         """
-        print "# Making shallow copies of SCI, MSK and WGT ndarrays"
+        logging.info("Making shallow copies of SCI, MSK and WGT ndarrays")
         self.OUT_SCI = copy.copy(self.SCI)
         self.OUT_MSK = copy.copy(self.MSK)
         self.OUT_WGT = copy.copy(self.WGT)
@@ -205,7 +237,7 @@ class DESImage(object):
         ofits.write(self.OUT_WGT,header=self.h_wgt,compress=self.compress,tile_dims=self.tile_dims)
         # Close the file
         ofits.close()
-        print >>sys.stderr,"# Wrote: %s" % self.outname
+        logging.info("Wrote: %s" % self.outname)
 
 ######################
 ### Masker objects ###
@@ -228,7 +260,7 @@ class BaseMasker(object):
         self.outdir = outdir
 
         if not os.path.exists(self.outdir):
-            print "# Creating output directory  %s" % self.outdir
+            logging.info("Creating output directory  %s" % self.outdir)
             os.mkdir(self.outdir)
 
         self._parse(**kwargs)
@@ -321,7 +353,7 @@ class CosmicMasker(BaseMasker):
             EDGEbit   = 512
         """
          
-        print "# Creating BAD/BPM pixel mask for interpolation"
+        logging.info("Creating BAD/BPM pixel mask for interpolation")
         # Mask for BAD=1 pixels that have been already interpolated
         # (INTERP=4), and keep the original values for later.  It is
         # important to note that we modify only the MSK ndarray, which
@@ -352,7 +384,7 @@ class CosmicMasker(BaseMasker):
         the CR finder.
         """
   
-        print "# Making LSST image structure from SCI, MSK and VAR"
+        logging.info("Making LSST image structure from SCI, MSK and VAR")
         # 0 Set up the Mask Plane dictionay for DECam
         self.set_DECamMaskPlaneDict()
         # 1 - Science
@@ -384,12 +416,12 @@ class CosmicMasker(BaseMasker):
         cr_prev  = np.where(np.bitwise_and(self.mska, CRAY))
         NCR_prev = len(cr_prev[0])
         if NCR_prev > 0:
-            print "# CRs previously found in image -- will be fixed before CR"
+            logging.info("CRs previously found in image -- will be fixed before CR")
             median_rep            = np.median(self.vara)
-            print "# Fixing weight map with median=%.1f for those %d CR-pixels"%(NCR_prev, median_rep)
+            logging.info("Fixing weight map with median=%.1f for those %d CR-pixels"%(NCR_prev, median_rep))
             self.vara[cr_prev]    = median_rep # The LSST handle
             self.image.OUT_WGT[cr_prev] = median_rep # The original array
-            print "# Fixing mask plane for those CR-pixels too " 
+            logging.info("Fixing mask plane for those CR-pixels too ")
             self.mska[cr_prev]    = self.mska[cr_prev]    - 16 # The LSST handle
             self.image.OUT_MSK[cr_prev] = self.image.OUT_MSK[cr_prev] - 16 # The original array
         # ************************************************************
@@ -409,19 +441,19 @@ class CosmicMasker(BaseMasker):
          
         # Estimate the PSF of the science image.
         if not self.fwhm:
-            print "# Will attempt to get FWHM from the image header"
+            logging.info("Attempting to get FWHM from the image header")
             self.fwhm  = self.image.get_FWHM()
             xsize = int(self.fwhm*9)
             psf   = measAlg.DoubleGaussianPsf(xsize, xsize, self.fwhm/(2*np.sqrt(2*np.log(2))))
          
         # Interpolate bad pixels before finding CR to avoid false detections
         fwhm = 2*np.sqrt(2*np.log(psf.computeShape().getDeterminantRadius()))
-        print "# Interpolating BPM/BAD pix mask" 
+        logging.info("Interpolating BPM/BAD pix mask")
         ip_isr.isr.interpolateFromMask(self.mi, fwhm, growFootprints=0, maskName = 'BAD')
          
         # simple background estimation to use on findCosmicRays
         background = afwMath.makeStatistics(self.mi.getImage(), afwMath.MEANCLIP).getValue()
-        print "# Setting up background at: %.1f [counts]" %  background
+        logging.info("Setting up background at: %.1f [counts]" %  background)
          
         # Tweak some of the configuration and call FindCosmicRays
         # More info on lsst/meas/algorithms/findCosmicRaysConfig.py
@@ -431,17 +463,17 @@ class CosmicMasker(BaseMasker):
         crConfig.nCrPixelMax = int(self.image.nx*self.image.ny/3) # 1e6 will not work, needs an integer
         if self.interpCR:
             crConfig.keepCRs  = False # Do interpolate
-            print "# Will erase detected CRs -- interpolate CRs on SCI image"
+            logging.info("Will erase detected CRs -- interpolate CRs on SCI image")
         else:
             crConfig.keepCRs  = True # Do not interpolate -- THIS DOESN'T WORK!!!!!
-            print "# Will keep detected CRs -- no interpolation on SCI image"
+            logging.info("Will keep detected CRs -- no interpolation on SCI image")
          
         # Now, we do the magic
         self.crs = measAlg.findCosmicRays(self.mi, psf, background, pexConfig.makePolicy(crConfig))
          
         # Dilate interpolation working on the mi element
         if self.dilateCR and self.interpCR:
-            print "# Dilating CR pix mask by %s pixel(s):" % self.nGrowCR
+            logging.info("Dilating CR pix mask by %s pixel(s):" % self.nGrowCR)
             ip_isr.isr.interpolateFromMask(self.mi, fwhm, growFootprints=self.nGrowCR, maskName = 'CR')
   
     def fix_pixels_CR(self):
@@ -458,8 +490,8 @@ class CosmicMasker(BaseMasker):
         masked_interp = (self.mska & INTERPbit) > 0 
         masked_cr     = (self.mska & CRbit) > 0
         NCR           = len(masked_cr[masked_cr==True])
-        print "# Detected:   %d CRs in %s " % (len(self.crs),self.image.filename)
-        print "# Containing: %d CR-pixels" % NCR
+        logging.info("Detected:   %d CRs in %s"%(len(self.crs),self.image.filename))
+        logging.info("Containing: %d CR-pixels"%NCR)
          
         # 1. The Science 
         # Put back the CRs in case we don't want to interp
@@ -548,7 +580,7 @@ class StreakMasker(BaseMasker):
          
         # Re-bin the image (if requested)
         if self.bin_factor > 1:
-            print "# Binning image by a factor of %s..."% self.bin_factor
+            logging.info("Binning image by a factor of %s..."% self.bin_factor)
             self.subIm  = self.bin_pixels(self.subIm,self.bin_factor)
             self.masked = np.ceil(self.bin_pixels(self.masked,self.bin_factor)).astype(bool)
 
@@ -558,7 +590,7 @@ class StreakMasker(BaseMasker):
         axes[1].imshow(self.masked)
            
         # Calculate sky noise
-        print "# Measuring sky noise..."
+        logging.info("Measuring sky noise...")
         usepix = np.where(~self.masked)
         self.sky_bkg, self.sky_err, self.sky_skew = self.mmm(self.subIm[usepix])
          
@@ -569,7 +601,7 @@ class StreakMasker(BaseMasker):
         self.searchIm = ( (self.subIm > self.nsig_sky*self.sky_err) & ~self.masked )
          
         # Should do a maxarea cut here...
-        print "# Performing Hough transform now..."
+        logging.info("Performing Hough transform now...")
         self.hough, self.theta, self.rho = Hough(self.searchIm).transform()
          
         # Read in the Hough template or create one
@@ -583,7 +615,7 @@ class StreakMasker(BaseMasker):
         idx = np.nonzero(sigma)
         self.trans[idx] = (self.hough[idx] - mean[idx]) / sigma[idx]
         #self.trans = np.nan_to_num( (self.hough - mean) / sigma )
-        print "# Maximum Hough value: %s" % self.trans.max()
+        logging.info("Maximum Hough value: %s" % self.trans.max())
          
         # Perform detection using structure and label
         self.detect_label,self.detect_nlabel = ndimage.label(self.trans > self.nsig_detect, structure=self.structure)
@@ -592,13 +624,13 @@ class StreakMasker(BaseMasker):
             maxarea = int(0.1*self.detect_label.size) # Get rid of background object
             good, = np.where((hist > 1) & (hist < maxarea))
             #good, = np.where( (hist > 1) )
-            print "# Detected %i streaks above a threshold of %s"%(len(good),self.nsig_detect)
+            logging.info("Detected %i streaks above a threshold of %s"%(len(good),self.nsig_detect))
         else:
-            print "# No streaks detected."
+            logging.info("No streaks detected.")
             rev,good = [],[]
          
         # Detection statistics
-        print "# Calculating detection statistics..."
+        logging.info("Calculating detection statistics...")
         self.detect_objs = self.streak_statistics(self.trans, self.rho, self.theta, good, rev)
         self.detect_objs['BINNING'][:] = self.bin_factor
          
@@ -610,7 +642,7 @@ class StreakMasker(BaseMasker):
         #cut |= ... # Central bias jump (x-dir)
         #cut |= ... # Central bias jump (y-dir)
         self.detect_objs['CUT'][np.nonzero(cut)] = 1
-        print "# Found %i lines passing quality cuts" % (self.detect_objs['CUT']==0).sum()
+        logging.info("Found %i lines passing quality cuts" % (self.detect_objs['CUT']==0).sum())
          
         # Merge nearby lines
         merge_label,merge_nlabel = ndimage.label(self.trans > self.nsig_merge,structure=self.structure)
@@ -622,12 +654,12 @@ class StreakMasker(BaseMasker):
                 good.append(lab)
             unique = np.unique(good)
             nmerged = len(good) - len(unique)
-            print "# Merging %i streaks above a threshold of %s"%(nmerged,self.nsig_merge)
+            logging.info("Merging %i streaks above a threshold of %s"%(nmerged,self.nsig_merge))
         else:
-            print "# No objects found for merging."
+            logging.info("No objects found for merging.")
             rev,unique = [],[]
          
-        print "# Calculating merging statistics..."
+        logging.info("Calculating merging statistics...")
         merge_objs = self.streak_statistics(self.trans, self.rho, self.theta, unique, rev)
         merge_objs['BINNING'][:] = self.bin_factor
          
@@ -640,8 +672,8 @@ class StreakMasker(BaseMasker):
         cut |= delta_theta > np.radians(self.max_angle)
          
         merge_objs['CUT'][np.nonzero(cut)] = 1
-        print "# Found %i streaks passing quality cuts"%((merge_objs['CUT']==0).sum())
-         
+        logging.info("Found %i streaks passing quality cuts"%((merge_objs['CUT']==0).sum()))
+
         # Masking threshold
         self.mask_label,mask_nlabel = ndimage.label(self.trans > self.nsig_mask,structure=self.structure)
         if mask_nlabel:
@@ -655,17 +687,17 @@ class StreakMasker(BaseMasker):
             unique = np.unique(good)
             nmerged = len(good) - len(unique)
             if nmerged: 
-                print "# Merging %i additional streaks"%(nmerged)
+                logging.info("Merging %i additional streaks"%(nmerged))
         else:
-           print "# No objects found for masking."
-           rev,unique = [],[]
+            logging.info("No objects found for masking.")
+            rev,unique = [],[]
          
-        print "# Calculating masking statistics..."
+        logging.info("Calculating masking statistics...")
         self.mask_objs = self.streak_statistics(self.trans, self.rho, self.theta, unique, rev)
         self.mask_objs['BINNING'][:] = self.bin_factor
          
         # Create the mask from the streaks
-        print "# Masking %i streaks"%(len(self.mask_objs))
+        logging.info("Masking %i streaks"%(len(self.mask_objs)))
         streak_mask = np.zeros(self.image.OUT_MSK.shape,dtype=self.image.OUT_MSK.dtype)
         wcs = wcsutil.WCS(self.image.h_sci)
         for i,obj in enumerate(self.mask_objs):
@@ -673,14 +705,14 @@ class StreakMasker(BaseMasker):
             inter1 = obj['INTER1']
             inter2 = obj['INTER2']
             # Print intercept in original image coordinates
-            print "#  %i   NSIG=%g, SLOPE=%g, INTER1=%g, INTER2=%g"%(i,obj['MAX'],slope,inter1*self.bin_factor,inter2*self.bin_factor)
+            logging.info("  %i   NSIG=%g, SLOPE=%g, INTER1=%g, INTER2=%g"%(i,obj['MAX'],slope,inter1*self.bin_factor,inter2*self.bin_factor))
           
             tmp_mask = np.zeros(self.searchIm.shape,dtype=self.image.OUT_MSK.dtype)
             tmp_mask = self.mask_between(tmp_mask,slope,inter1,inter2,self.mask_factor)
           
             clip = np.abs(np.abs(np.degrees(np.arctan(slope)))-self.clip_angle) < self.clip_range
             if self.clip and clip:
-                print "# Examining streak for clipping..."
+                logging.info("Examining streak for clipping...")
                 tmp_mask = self.clip_mask(self.searchIm,self.masked,tmp_mask,slope,self.nsig_clip)
           
             # Move to original resolution
@@ -721,8 +753,7 @@ class StreakMasker(BaseMasker):
             outbase = basename.split('.fit')[0]+'_streaks.fits'
             outname = os.path.join(self.outdir,outbase)
 
-        #logger.info("Writing objects: %s" % (objsfile))
-        print "# Writing streak objects: %s" % (outname)
+        logging.info("Writing streak objects: %s" % (outname))
         fitsio.write(outname,self.mask_objs,clobber=True)
   
     def write_streak_mask(self):
@@ -730,7 +761,7 @@ class StreakMasker(BaseMasker):
         outbase = basename.split('.fit')[0]+'_mask.fits'
         outname = os.path.join(self.image.outdir,outbase)
 
-        print "# Writing streak mask: %s" % (outname)
+        logging.info("Writing streak mask: %s" % (outname))
         
         maskonly = np.zeros(self.image.OUT_MSK.shape,dtype=self.image.OUT_MSK.dtype)
         test = np.where((self.image.OUT_MSK & self.setbit) > 0)
@@ -754,7 +785,7 @@ class StreakMasker(BaseMasker):
          
         # The sky noise
         pngfile = "%s_sky.png" % drawbase
-        print "# Drawing sky noise: %s " % pngfile
+        logging.info("Drawing sky noise: %s " % pngfile)
         fig, axes = plt.subplots(1, 3)
         sigma     = [1,2,3]
         for ax,sig in zip(axes,sigma):
@@ -765,7 +796,7 @@ class StreakMasker(BaseMasker):
          
         # Draw the input mask
         pngfile = "%s_bits.png" % drawbase
-        print "# Drawing input mask: %s " % pngfile
+        logging.info("Drawing input mask: %s " % pngfile)
         fig, axes = plt.subplots(1, 3)
         axes[0].imshow(self.subIm > self.nsig_sky*self.sky_err,origin='bottom')
         axes[0].set_title("Threshold Image")
@@ -777,7 +808,7 @@ class StreakMasker(BaseMasker):
          
         # Draw the lines and masks
         pngfile = "%s_mask.png" % drawbase
-        print "# Drawing streaks and masks: %s" % pngfile
+        logging.info("Drawing streaks and masks: %s" % pngfile)
         ymax,xmax = self.searchIm.shape; x = np.arange(xmax)
         fig, axes = plt.subplots(1, 3)
         titles = ["Sky Noise","Streaks","Mask"]
@@ -798,7 +829,7 @@ class StreakMasker(BaseMasker):
          
         #  Draw Hough transform at various thresholds
         pngfile = "%s_hough.png" % drawbase
-        print "# Drawing Hough transform: %s" % pngfile
+        logging.info("Drawing Hough transform: %s" % pngfile)
         fig, axes = plt.subplots(2,2,figsize=(12,6),sharey='all',sharex='all')
         axes = axes.flatten()
         extent = [self.theta.min(),self.theta.max(),self.rho.min(),self.rho.max()]
@@ -824,10 +855,10 @@ class StreakMasker(BaseMasker):
         template_file = "hough_template_x%i_y%i.npy" % self.searchIm.shape[::-1]
         filename = os.path.join(self.template_dir,template_file)
         if os.path.exists(filename):
-            print "# Reading template from %s" % filename
+            logging.info("Reading template from %s" % filename)
             self.template = read_template(filename)[0]
         else:
-            print "# No template Found --> calculating Hough normalization..."
+            logging.info("No template Found --> calculating Hough normalization...")
             template_image = (np.ones(self.searchIm.shape,dtype=bool) & ~self.masked)
             self.template = Hough(template_image).transform()[0]
 
@@ -884,7 +915,7 @@ class StreakMasker(BaseMasker):
         shape = array.shape
         ncol = shape[1]
         for i in range(0,ngood):
-            #logger.debug("i=%i",i)
+            logging.debug("--- i=%i",i)
             # This code could use some cleanup...
             i1a=rev[rev[good[i]]:rev[good[i]+1]]
             xpix = i1a % ncol
@@ -893,8 +924,8 @@ class StreakMasker(BaseMasker):
             npix = len(xpix)
             objs[i]['LABEL'] = good[i]
             objs[i]['NPIX'] = npix
-            #logger.debug("LABEL=%i"%objs[i]['LABEL'])
-            #logger.debug("NPIX=%i"%objs[i]['NPIX'])
+            logging.debug("LABEL\t= %i"%objs[i]['LABEL'])
+            logging.debug("NPIX\t= %i"%objs[i]['NPIX'])
      
             # This would be slow with more candidate lines...
             island = np.zeros(shape)
@@ -907,17 +938,16 @@ class StreakMasker(BaseMasker):
             objs[i]['MAX']   = island[ymax,xmax]
             objs[i]['MAX_X0'] = xmax
             objs[i]['MAX_Y0'] = ymax
-            #logger.debug("MAX=%i"%objs[i]['MAX'])
-            #logger.debug("MAX_X0=%i"%objs[i]['MAX_X0'])
-            #logger.debug("MAX_Y0=%i"%objs[i]['MAX_Y0'])
+            logging.debug("MAX\t= %i"%objs[i]['MAX'])
+            logging.debug("MAX_X0, MAX_Y0\t= %i, %i"%(objs[i]['MAX_X0'],objs[i]['MAX_Y0']))
      
             # Full extent of the island
             objs[i]['XMIN'] = xpix.min()
             objs[i]['XMAX'] = xpix.max()
-            #logger.debug("XMIN=%i, XMAX=%i"%(objs[i]['XMIN'],objs[i]['XMAX']))
+            logging.debug("XMIN, XMAX\t= %i, %i"%(objs[i]['XMIN'],objs[i]['XMAX']))
             objs[i]['YMIN'] = ypix.min()
             objs[i]['YMAX'] = ypix.max()
-            #logger.debug("YMIN=%i, YMAX=%i"%(objs[i]['YMIN'],objs[i]['YMAX']))
+            logging.debug("YMIN, YMAX\t= %i, %i"%(objs[i]['YMIN'],objs[i]['YMAX']))
      
             # Find pixel closest to centroid (careful of x-y confusion)
             centroid = ndimage.center_of_mass(island)
@@ -926,14 +956,12 @@ class StreakMasker(BaseMasker):
             xcent,ycent = pix[idx]
             objs[i]['CEN_X0'] = xcent
             objs[i]['CEN_Y0'] = ycent
-            #logger.debug("CEN_X0=%i"%objs[i]['CEN_X0'])
-            #logger.debug("CEN_Y0=%i"%objs[i]['CEN_Y0'])
+            logging.debug("CEN_X0, CEN_Y0\t= %i, %i"%(objs[i]['CEN_X0'],objs[i]['CEN_Y0']))
             extent = np.nonzero(island[:,xcent])[0]
             ycent1,ycent2 = extent.min(),extent.max()+1
             objs[i]['CEN_Y1'] = ycent1
             objs[i]['CEN_Y2'] = ycent2
-            #logger.debug("CEN_Y1=%i"%objs[i]['CEN_Y1'])
-            #logger.debug("CEN_Y2=%i"%objs[i]['CEN_Y2'])
+            logging.debug("CEN_Y1, CEN_Y2\t= %i, %i"%(objs[i]['CEN_Y1'],objs[i]['CEN_Y2']))
      
             # Calculate the slope and intercept
             theta0 = theta[xcent]
@@ -944,12 +972,12 @@ class StreakMasker(BaseMasker):
             objs[i]['SLOPE']  = slope
             objs[i]['INTER1'] = inter1
             objs[i]['INTER2'] = inter2
-            #logger.debug("SLOPE=%.3g"%objs[i]['SLOPE'])
-            #logger.debug("INTER1=%.3g"%objs[i]['INTER1'])
-            #logger.debug("INTER2=%.3g"%objs[i]['INTER2'])
+            logging.debug("SLOPE\t= %.3g"%objs[i]['SLOPE'])
+            logging.debug("INTER1\t= %.3g"%objs[i]['INTER1'])
+            logging.debug("INTER2\t= %.3g"%objs[i]['INTER2'])
      
             objs[i]['WIDTH']  = np.abs(rho1 - rho2)
-            #logger.debug("WIDTH=%.3g\n"%objs[i]['WIDTH'] )
+            logging.debug("WIDTH\t= %.3g"%objs[i]['WIDTH'] )
         return objs
 
     @staticmethod
@@ -1093,8 +1121,7 @@ class StreakMasker(BaseMasker):
             upper = inter1; lower = inter2
         else:
             upper = inter2; lower = inter1
-        #logger.debug("Mask: %s + %s > b > %s - %s"%(upper,delta,lower,delta))
-        #print "# Mask: %s + %s > b > %s - %s"%(upper,delta,lower,delta)
+        logging.debug("Mask: %s + %s > b > %s - %s"%(upper,delta,lower,delta))
         select = (yy < slope * xx + upper + delta) & \
             (yy > slope * xx +lower - delta)
      
@@ -1154,12 +1181,12 @@ class StreakMasker(BaseMasker):
             nexp = chunk.count()*density
             sigma = np.sqrt(nexp)
      
-            #logger.info("Chunk %i: nobs=%g, nexp=%g, sigma=%g"%(i,nobs,nexp,sigma))
+            #logging.info("Chunk %i: nobs=%g, nexp=%g, sigma=%g"%(i,nobs,nexp,sigma))
             nsigma = (nexp - nobs)/sigma
-            print "#  Chunk %i: nexp=%g, nobs=%g, nsig=%g"%(i,nexp,nobs,nsigma)
+            logging.info("  Chunk %i: nexp=%g, nobs=%g, nsig=%g"%(i,nexp,nobs,nsigma))
             #if nobs < (nexp - nsig_clip * sigma): 
             if nsigma > nsig_clip: 
-               #logger.debug("   Sparse chunk %i: nsig > %g"%(i,nsig_clip))
+               #logging.debug("   Sparse chunk %i: nsig > %g"%(i,nsig_clip))
                keep[i] = False
             tmp_mask[ypix[idx],xpix[idx]] = i+1
      
@@ -1175,8 +1202,7 @@ class StreakMasker(BaseMasker):
         out_mask = np.zeros(mask.shape)
         for i,n in enumerate(hist):
             if not (first <= i < last): 
-                #logger.debug("   Clipping chunk %i"%i)
-                print "# Clipping chunk %i"%i
+                logging.debug("   Clipping chunk %i"%i)
                 continue
             idx = rev[rev[i]:rev[i+1]]
             out_mask[ypix[idx],xpix[idx]] = True
@@ -1426,7 +1452,7 @@ class StreakMasker(BaseMasker):
         # This is not very stable. It would be better to subclass the
         # DESImage class to take care of this...
 
-        print "# Reading background file:%s" % bkgfile
+        logging.info("Reading background file:%s" % bkgfile)
      
         # Make sure the image exists
         if not os.path.exists(bkgfile):
@@ -1523,7 +1549,6 @@ def cmdline():
     general.add_argument('-v','--verbose', action="count", help="Output verbosity")
     general.add_argument('--compress', action="store_true", help="RICE/fpack compress output")
     general.add_argument('--outdir',default="immask_out", help="Path to QA output files")
-
     subparsers=parser.add_subparsers(dest='command',title='Available subcommands')
 
     # Cosmic-ray masking subcommmand
@@ -1534,7 +1559,7 @@ def cmdline():
                                       parents=[general,cosmics],
                                       formatter_class=formatter,
                                       help=description)
-    subparser.set_defaults(func=run_cosmics)
+    #subparser.set_defaults(func=run_cosmics)
 
     # Streak masking subcommand
     title = 'streaks'
@@ -1544,8 +1569,8 @@ def cmdline():
                                       parents=[general,streaks],
                                       formatter_class=formatter,
                                       help=description)
-    subparser.set_defaults(func=run_streaks)
-
+    #subparser.set_defaults(func=run_streaks)
+    
     # Add star masks here...
     
     # Add bleed trails here...
@@ -1557,43 +1582,38 @@ def cmdline():
                                       parents=[general,cosmics,streaks],
                                       formatter_class=formatter,
                                       help=description)
-    subparser.set_defaults(func=run_all)
-    
+    #subparser.set_defaults(func=run_all)
+    parser.set_defaults(func=run)
+
     return parser
 
-# ADW: This should be cleaned to reduce repetion
-def run_cosmics(args):
-    print '# Run %s...'%args.command
+def run(args):
+    create_logger(logging.DEBUG if args.verbose else logging.INFO)
+
+    commands = [args.command]
     kwargs = vars(args)
     image = DESImage(**kwargs)
-    cosmics = CosmicMasker(image, **kwargs)
-    image.write()
+    if 'all' in commands: commands = ['cosmics','streaks']
+    for command in commands:
+        logging.info('Running %s...'%command)
+        if command == 'cosmics':
+            cosmics = CosmicMasker(image, **kwargs)
+        if command == 'streaks':
+            streaks = StreakMasker(image, **kwargs)
 
-def run_streaks(args):
-    print '# Run %s...'%args.command
-    kwargs = vars(args)
-    image = DESImage(**kwargs)
-    streaks = StreakMasker(image, **kwargs)
-    image.write()
+        ## In the future...
+        #if command == 'stars':
+        #    stars = StarMasker(image, **kwargs)
+        #if command == 'bleeds':
+        #    bleeds = BleedMasker(image, **kwargs)
 
-def run_all(args):
-    print '# Run %s...'%args.command
-    kwargs = vars(args)
-    image = DESImage(**kwargs)
-    cosmics = CosmicMasker(image, **kwargs)
-    streaks = StreakMasker(image, **kwargs)
-    # In the future...
-    #stars = StarMasker(image, **kwargs)
-    #bleeds = BleedMasker(image, **kwargs)
     image.write()
-
+        
 # Format time
-def elapsed_time(t1,verb=False):
+def elapsed_time(t1):
     import time
     t2    = time.time()
     stime = "%dm %2.2fs" % ( int( (t2-t1)/60.), (t2-t1) - 60*int((t2-t1)/60.))
-    if verb:
-        print >>sys.stderr,"Elapsed time: %s" % stime
     return stime
      
 if __name__ == "__main__":
@@ -1605,4 +1625,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
     args.func(args)
 
-    print >>sys.stderr,"# Time:%s" % elapsed_time(t0)
+    #print >>sys.stderr,"# Time:%s" % elapsed_time(t0)
+    logging.info("Time:%s" % elapsed_time(t0))
