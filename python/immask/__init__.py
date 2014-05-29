@@ -1,5 +1,5 @@
-__author__  = "Felipe Menanteau"
-__version__ = '0.2.0-br0'
+__author__  = "Felipe Menanteau, Alex Drlica-Wagner, Eli Rykoff"
+__version__ = 'trunk'
 version = __version__
 
 """
@@ -25,5 +25,5 @@ from .immasklib import elapsed_time
 #from . import streak_masking
 #from .streak_masking import STREAK
 #from .streak_masking import cmdline
-print "# Module %s v%s is loaded" % (__name__,__version__)
+#print "# Module %s v%s is loaded" % (__name__,__version__)
 
