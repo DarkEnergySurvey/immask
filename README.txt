@@ -18,7 +18,7 @@ To install locally in $HOME:
 To run:
 
  %> bin/immask DECam_00226647_47.fits.fz clean_DECam_00226647_47.fits  --bkgfile DECam_00226647_47_bkg.fits.fz 
- %> bin/immask DECam_00226647_47.fits    clean_DECam_00226647_47.fits  --bkgfile DECam_00226647_47_bkg.fits.fz 
+ %> bin/immask DECam_00226647_47.fits    clean_DECam_00226647_47.fits  --bkgfile DECam_00226647_47_bkg.fits
 
 To generate an fpacked output image:
 
@@ -27,3 +27,15 @@ To generate an fpacked output image:
 to see all options:
 
  %> bin/immask --help
+
+
+To run in cosmology cluster via eups
+
+unsetenv EUPS_DIR
+unsetenv EUPS_PATH
+
+source /des002/apps/RHEL6/dist/eups/desdm_eups_setup.csh
+
+setup cfitsio_shared        3.360+3
+setup immask                0.2.2+0
+setup lsstset               7.1.0+4  

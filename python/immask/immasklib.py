@@ -316,15 +316,27 @@ class DESIMA:
         Find the Cosmic Rays on a Science Image using lsst.meas.algorithms.findCosmicRays
         """
          
-        # Estimate the PSF of the science image.
+        # Estimate the PSF of the science image -- we do this by default
         if not self.fwhm:
             print "# Will attempt to get FWHM from the image header"
             self.fwhm  = get_FWHM(self.ifits,self.sci_hdu)
-            xsize = int(self.fwhm*9)
-            psf   = measAlg.DoubleGaussianPsf(xsize, xsize, self.fwhm/(2*math.sqrt(2*math.log(2))))
+
+        xsize = int(self.fwhm*9)
+        sigma = self.fwhm/(2*math.sqrt(2*math.log(2)))
+        psf = measAlg.DoubleGaussianPsf(xsize, xsize, sigma)
+        psf_radius = psf.computeShape().getDeterminantRadius() 
+
+        # Avoid too small psf_radius...
+        if psf_radius < 2:
+            print "# WARNING: psf_radius %s is too small" % psf_radius
+            psf_radius = 2
+            print "# WARNING: setting psf_radius to %s " % psf_radius
+
          
         # Interpolate bad pixels before finding CR to avoid false detections
-        fwhm = 2*math.sqrt(2*math.log(psf.computeShape().getDeterminantRadius()))
+        # Recover FWHM from psf value
+        fwhm  = 2*math.sqrt(2*math.log(2))*psf_radius #  This is the right expression -- corrected 
+        print "# Will use fwhm %s for CR/BAD interpolation" % fwhm
         print "# Interpolating BPM/BAD pix mask" 
         ip_isr.isr.interpolateFromMask(self.mi, fwhm, growFootprints=0, maskName = 'BAD')
          
@@ -346,7 +358,10 @@ class DESIMA:
             print "# Will keep detected CRs -- no interpolation on SCI image"
          
         # Now, we do the magic
+        tCR = time.time()
+        print "# Starting CR finder"
         self.crs = measAlg.findCosmicRays(self.mi, psf, background, pexConfig.makePolicy(crConfig))
+        print "# Done CR in %s for: %s " % (elapsed_time(tCR,verb=False),self.fileName)
          
         # Dilate interpolation working on the mi element
         if self.dilateCR and self.interpCR:
@@ -413,6 +428,10 @@ class DESIMA:
         @updates: Felipe Menanteau <felipe@illinois.edu> 
         --
         """
+
+        tSTREAKS = time.time()
+        print "# Starting Streak finder"
+
         ####################################################
         for key in np.intersect1d(self.STREAK_ARGS.keys(),kwargs.keys()):
             self.__dict__[key] = kwargs[key]
@@ -578,6 +597,8 @@ class DESIMA:
         self.OUT_MSK[ypix,xpix] = self.OUT_MSK[ypix,xpix] | self.setbit 
         # and zero out the weight
         self.OUT_WGT[ypix,xpix] = 0
+
+        print "# Done Streaks in %s:" % elapsed_time(tSTREAKS,verb=False)
          
         # Draw Plots
         if self.draw:
@@ -1470,6 +1491,11 @@ def get_FWHM(FITS,sci_hdu):
    # Into arcseconds
    if fwhm_arcsec > 1.2:
        print "# WARNING: Header FWHM value: %.2f[arcsec] / %.1f[pixels] is too high -- should not be trusted" % (fwhm_arcsec,fwhm)
+
+   # Make sure that FWHM is not too small either
+   if fwhm_arcsec < 2*pixscale:
+       print "# WARNING: Header FWHM value: %.2f[arcsec] / %.1f[pixels] is too small -- forcing it to 2 pix" % (fwhm_arcsec,fwhm)
+       fwhm = 2.0
       
    return fwhm
 

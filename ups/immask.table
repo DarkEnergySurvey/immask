@@ -1,7 +1,8 @@
-setupRequired("matplotlib 1.2.0")
-setupRequired("scipy 0.12.0")
-setupRequired("fitsio 0.9.4")
-setupRequired("pyhough 0.1")
-setupRequired("despyutils 0.1.0")
+setupRequired("scipy 0.12.0+3")
+setupRequired("fitsio 0.9.5.1rc1+1")
+setupRequired("pyhough 0.1+2")
+setupRequired("matplotlib 1.2.0+9")
+setupRequired("despyutils 0.1.3+4")
+
 envAppend(PYTHONPATH, ${PRODUCT_DIR}/python)
 envAppend(PATH, ${PRODUCT_DIR}/bin)
