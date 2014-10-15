@@ -1,4 +1,9 @@
 # Start the EUPS LSST mode
+
+unsetenv EUPS_PATH
+unsetenv EUPS_DIR
+unsetenv EUPS_PKGROOT 
+
 echo "Loading up LSST frame work "
 source /opt/lsst/osx-10.8-x86_64/loadLSST.csh
 
