@@ -1,12 +1,15 @@
 #!/usr/bin/env python
 
 """
-Suite of fuctions and class for the DESDM immask python module.
-
 $Id$
 $Rev::                                  $:  # Revision of last commit.
 $LastChangedBy::                        $:  # Author of last commit.
 $LastChangedDate::                      $:  # Date of last commit.
+
+Suite of fuctions and class for the DESDM immask python module.
+
+ToDo:
+ - Masking bits need to be taken from imsupport
 
 @authors: Felipe Menanteau    <felipe@illinois.edu>
 @authors: Eli Rykoff          <rykoff@slac.stanford.edu>
@@ -914,6 +917,7 @@ class StreakMasker(BaseMasker):
      
         shape = array.shape
         ncol = shape[1]
+
         for i in range(0,ngood):
             logging.debug("--- i=%i",i)
             # This code could use some cleanup...
