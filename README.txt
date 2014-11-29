@@ -31,7 +31,20 @@ To see options:
  %> bin/immask <subcommand> --help
 
 
+To run on NCSA cosmology cluster via eups:
+
+unsetenv EUPS_DIR
+unsetenv EUPS_PATH
+
+source /des002/apps/RHEL6/dist/eups/desdm_eups_setup.csh
+
+setup cfitsio_shared        3.360+3
+setup immask                0.2.2+0
+setup lsstset               7.1.0+4  
+
+
 To Do:
+---------------
 - Load bad pixel bit mask directly from imsupport
 - More extensive method documentation.
 - Add decorator for masker class containing defaults.

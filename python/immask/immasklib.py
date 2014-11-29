@@ -157,6 +157,11 @@ class DESImage(object):
        # Into arcseconds
        if fwhm_arcsec > 1.2:
            logging.warning("Header FWHM value: %.2f[arcsec] / %.1f[pixels] is too high -- should not be trusted" % (fwhm_arcsec,fwhm))
+
+       # Make sure that FWHM is not too small either
+       if fwhm_arcsec < 2*pixscale:
+           logging.warning("Header FWHM value: %.2f[arcsec] / %.1f[pixels] is too small -- forcing it to 2 pix" % (fwhm_arcsec,fwhm))
+           fwhm = 2.0
           
        return fwhm
 
@@ -299,13 +304,20 @@ class CosmicMasker(BaseMasker):
 
     ### Command line arguments for cosmic-ray masking
     defaults = OrderedDict([
-        ['interpCR'  , dict(default=True, action="store_true", help="Interpolate CR in science image.")],
-        ['noInterpCR', dict(action="store_true", help="Do not Interpolate CR in Science image.")],
-        ['dilateCR'  , dict(action="store_true", help="Dilate CR mask by 1 pixel.")],
-        ['nGrowCR'   , dict(default=1, type=int, help="Dilate CR mask by nGrowCR pixels.")],
-        ['fwhm'      , dict(default=None, type=float, help="Set a FWHM [pixels] value that overrides the header FWHM value in image")],
-        ['minSigma'  , dict(default=5, type=float, help="CRs must be > this many sky-sig above sky")],
-        ['min_DN'    , dict(default=150, type=int, help="CRs must have > this many DN (== electrons/gain) in initial detection")],
+        ['interpCR'  , dict(default=True, action="store_true", 
+                            help="Interpolate CR in science image.")],
+        ['noInterpCR', dict(action="store_true", 
+                            help="Do not Interpolate CR in Science image.")],
+        ['dilateCR'  , dict(action="store_true", 
+                            help="Dilate CR mask by 1 pixel.")],
+        ['nGrowCR'   , dict(default=1, type=int, 
+                            help="Dilate CR mask by nGrowCR pixels.")],
+        ['fwhm'      , dict(default=None, type=float, 
+                            help="Set FWHM [pixels] value that overrides the header")],
+        ['minSigma'  , dict(default=5, type=float, 
+                            help="CRs must be > this many sigma above sky")],
+        ['min_DN'    , dict(default=150, type=int, 
+                            help="Minimum DN (== electrons/gain) for detection")],
         ])
 
     def run(self):
@@ -442,22 +454,34 @@ class CosmicMasker(BaseMasker):
         Find the Cosmic Rays on a Science Image using lsst.meas.algorithms.findCosmicRays
         """
          
-        # Estimate the PSF of the science image.
+        # Estimate the PSF of the science image -- we do this by default
         if not self.fwhm:
             logging.info("Attempting to get FWHM from the image header")
-            self.fwhm  = self.image.get_FWHM()
-            xsize = int(self.fwhm*9)
-            psf   = measAlg.DoubleGaussianPsf(xsize, xsize, self.fwhm/(2*np.sqrt(2*np.log(2))))
-         
+            self.fwhm  = get_FWHM(self.ifits,self.sci_hdu)
+
+        xsize = int(self.fwhm*9)
+        sigma = self.fwhm/(2*math.sqrt(2*math.log(2)))
+        psf = measAlg.DoubleGaussianPsf(xsize, xsize, sigma)
+        psf_radius = psf.computeShape().getDeterminantRadius() 
+
+        # Avoid too small psf_radius...
+        if psf_radius < 2:
+            logging.warning("psf_radius %s is too small"%psf_radius)
+            psf_radius = 2 # pixels(?)
+            logging.warning("Setting psf_radius to %s "%psf_radius)
+
         # Interpolate bad pixels before finding CR to avoid false detections
-        fwhm = 2*np.sqrt(2*np.log(psf.computeShape().getDeterminantRadius()))
+        # Recover FWHM from psf value
+        fwhm  = 2*math.sqrt(2*math.log(2))*psf_radius # FM: This is the right expression -- corrected 
+        logging.info("Will use fwhm %s for CR/BAD interpolation"%fwhm)
         logging.info("Interpolating BPM/BAD pix mask")
-        ip_isr.isr.interpolateFromMask(self.mi, fwhm, growFootprints=0, maskName = 'BAD')
+        ip_isr.isr.interpolateFromMask(self.mi, fwhm, growFootprints=0, maskName='BAD')
          
         # simple background estimation to use on findCosmicRays
         background = afwMath.makeStatistics(self.mi.getImage(), afwMath.MEANCLIP).getValue()
-        logging.info("Setting up background at: %.1f [counts]" %  background)
-         
+
+        logging.info("Setting up background at: %.1f [counts]"%background)
+
         # Tweak some of the configuration and call FindCosmicRays
         # More info on lsst/meas/algorithms/findCosmicRaysConfig.py
         crConfig             = measAlg.FindCosmicRaysConfig()
@@ -470,10 +494,13 @@ class CosmicMasker(BaseMasker):
         else:
             crConfig.keepCRs  = True # Do not interpolate -- THIS DOESN'T WORK!!!!!
             logging.info("Will keep detected CRs -- no interpolation on SCI image")
-         
+
         # Now, we do the magic
+        tCR = time.time()
+        logging.info("Starting CR finder")
         self.crs = measAlg.findCosmicRays(self.mi, psf, background, pexConfig.makePolicy(crConfig))
-         
+        logging.info("Found CR in %s for: %s " % (elapsed_time(tCR,verb=False),self.fileName)
+
         # Dilate interpolation working on the mi element
         if self.dilateCR and self.interpCR:
             logging.info("Dilating CR pix mask by %s pixel(s):" % self.nGrowCR)
@@ -530,32 +557,52 @@ class StreakMasker(BaseMasker):
     """
 
     defaults = OrderedDict([
-        ['bkgfile'     , dict(required=True,help="Input background FITS file (fz/fits)")],
-        ['draw'        , dict(action='store_true',help="Use matplotlib to draw diagnostic plots.")],
-        ['template_dir', dict(default="/dev/null",help="Directory containing Hough template.")],
+        ['bkgfile'     , dict(required=True,
+                              help="Input background FITS file (fz/fits)")],
+        ['draw'        , dict(action='store_true',
+                              help="Use matplotlib to draw diagnostic plots.")],
+        ['template_dir', dict(default="/dev/null",
+                              help="Directory containing Hough template.")],
         # Image pre-processing
-        ['bin_factor'   , dict(default=8, type=int, help="Binning factor to beat down sky noise")],
+        ['bin_factor'   , dict(default=8, type=int, 
+                               help="Binning factor to beat down sky noise")],
         # For detection, merging, and characterization
-        ['nsig_sky'     , dict(default=1.5,type=float,help="Threshold for sky noise") ],
-        ['nsig_detect'  , dict(default=14.,type=float,help="Threshold for Hough peak detection") ],
-        ['nsig_merge'   , dict(default=8.,type=float,help="Threshold for Hough peak merging ")],
-        ['nsig_mask'    , dict(default=8.,type=float,help="Threshold for Hough peak characterization")],
+        ['nsig_sky'     , dict(default=1.5,type=float,
+                               help="Threshold for sky noise") ],
+        ['nsig_detect'  , dict(default=14.,type=float,
+                               help="Threshold for Hough peak detection") ],
+        ['nsig_merge'   , dict(default=8.,type=float,
+                               help="Threshold for Hough peak merging ")],
+        ['nsig_mask'    , dict(default=8.,type=float,
+                               help="Threshold for Hough peak characterization")],
         # Quality cuts
-        ['max_width'    , dict(default=150.,type=float,help="Maximum width in (pix)")],
-        ['max_angle'    , dict(default=15., type=float,help="Maximum angular extent (deg)")],
+        ['max_width'    , dict(default=150.,type=float,
+                               help="Maximum width in (pix)")],
+        ['max_angle'    , dict(default=15., type=float,
+                               help="Maximum angular extent (deg)")],
         # For clipping the ends of streak
-        ['clip'         , dict(action="store_true",help="Clip underpopulated ends of the streak.")],
-        ['nsig_clip'    , dict(default=2.,  type=float,help="Clip chunks that are more than 'nsig' underdense.")],
-        ['clip_angle'   , dict(default=45., type=float,help="Clip streaks close to the given abs. angle (deg).")],
-        ['clip_range'   , dict(default=10., type=float,help="Allowed clip angle range (deg); >90 to accept all angles")],
+        ['clip'         , dict(action="store_true",
+                               help="Clip underpopulated ends of the streak.")],
+        ['nsig_clip'    , dict(default=2.,  type=float,
+                               help="Clip chunks that are more than 'nsig' underdense.")],
+        ['clip_angle'   , dict(default=45., type=float,
+                               help="Clip streaks close to the given abs. angle (deg).")],
+        ['clip_range'   , dict(default=10., type=float,
+                               help="Allowed clip angle range (deg); >90 to accept all angles")],
         # For masking
-        ['mask_factor'  , dict(default=1.5, type=float, help="Factor to increase streak width for masking")],
-        ['maskbits'     , dict(default=1023,type=int,help="Ignore these mask bits ")],
-        ['setbit'       , dict(default=1024,type=int,help="New streak mask bit")],
-        ['maxmask'      , dict(default=1000,type=int,help="Maximum number of streaks to mask [NOT IMPLEMENTED]")],
+        ['mask_factor'  , dict(default=1.5, type=float, 
+                               help="Factor to increase streak width for masking")],
+        ['maskbits'     , dict(default=1023,type=int,
+                               help="Ignore these mask bits ")],
+        ['setbit'       , dict(default=1024,type=int,
+                               help="New streak mask bit value")],
+        ['maxmask'      , dict(default=1000,type=int,
+                               help="Maximum number of streaks to mask [NOT IMPLEMENTED]")],
         # Streak objects
-        ['write_streaks', dict(action="store_true",help="Write out streak objects")],
-        ['streaksfile', dict(default=False,help="Output streak objects FITS file")]
+        ['write_streaks', dict(action="store_true",
+                               help="Write out streak objects")],
+        ['streaksfile', dict(default=False,
+                             help="Output streak objects FITS file")]
         ])
 
     def run(self):
@@ -571,6 +618,9 @@ class StreakMasker(BaseMasker):
         --
         """
         ####################################################
+
+        tSTREAKS = time.time()
+        loggint.info("Starting streak finder")
 
         # Read in the background image nd-array
         self.BKG    = self.read_bkg_image(self.bkgfile)
@@ -740,6 +790,8 @@ class StreakMasker(BaseMasker):
         # and zero out the weight
         self.image.OUT_WGT[ypix,xpix] = 0
          
+        logging.info("Ran streaks in %s."%elapsed_time(tSTREAKS,verb=False))
+
         # Draw Plots
         if self.draw:
             self.draw_plots()
@@ -1614,10 +1666,12 @@ def run(args):
     image.write()
         
 # Format time
-def elapsed_time(t1):
+def elapsed_time(t1,verb=False):
     import time
     t2    = time.time()
     stime = "%dm %2.2fs" % ( int( (t2-t1)/60.), (t2-t1) - 60*int((t2-t1)/60.))
+    if verb:
+        print >>sys.stderr,"Elapsed time: %s" % stime
     return stime
      
 if __name__ == "__main__":
