@@ -1,15 +1,16 @@
-__author__  = "Felipe Menanteau, Alex Drlica-Wagner, Eli Rykoff"
-__version__ = 'trunk'
-version = __version__
-
 """
 The DESDM single-CCD image masking module.
 
-$Id$
+$Id: __init__.py 22391 2014-05-29 22:17:54Z kadrlica $
 $Rev::                                  $:  # Revision of last commit.
-$LastChangedBy::                        $:  # Author of last commit.
-$LastChangedDate::                      $:  # Date of last commit.
+$LastChangedBy:: kadrlica               $:  # Author of last commit.
+$LastChangedDate:: 2014-05-29 17:17:54 #$:  # Date of last commit.
 """
+
+__author__  = "Felipe Menanteau, Alex Drlica-Wagner, Eli Rykoff"
+__version__ = 'trunk'
+__revision__= "$Rev$".strip('$').split()[-1]
+version = __version__
 
 from . import immasklib
 from .immasklib import cmdline
