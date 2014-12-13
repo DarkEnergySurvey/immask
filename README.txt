@@ -1,4 +1,5 @@
 DESDM image masking module
+---------------
 
 Mask satellite streaks and cosmic rays 
 
@@ -48,6 +49,5 @@ To Do:
 - Load bad pixel bit mask directly from imsupport
 - More extensive method documentation.
 - Add decorator for masker class containing defaults.
-- Re-introduce python logging instead of print statements (and tie to --verbose).
 - Re-factor 'immasklib' into 'image' and 'masker' files.
 - Clean up conflict between '--compress' and '.fz' file endings.
