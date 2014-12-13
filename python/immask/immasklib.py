@@ -457,10 +457,10 @@ class CosmicMasker(BaseMasker):
         # Estimate the PSF of the science image -- we do this by default
         if not self.fwhm:
             logging.info("Attempting to get FWHM from the image header")
-            self.fwhm  = get_FWHM(self.ifits,self.sci_hdu)
+            self.fwhm  = self.image.get_FWHM()
 
         xsize = int(self.fwhm*9)
-        sigma = self.fwhm/(2*math.sqrt(2*math.log(2)))
+        sigma = self.fwhm/(2*np.sqrt(2*np.log(2)))
         psf = measAlg.DoubleGaussianPsf(xsize, xsize, sigma)
         psf_radius = psf.computeShape().getDeterminantRadius() 
 
@@ -472,7 +472,7 @@ class CosmicMasker(BaseMasker):
 
         # Interpolate bad pixels before finding CR to avoid false detections
         # Recover FWHM from psf value
-        fwhm  = 2*math.sqrt(2*math.log(2))*psf_radius # FM: This is the right expression -- corrected 
+        fwhm  = 2*np.sqrt(2*np.log(2))*psf_radius # FM: This is the right expression -- corrected 
         logging.info("Will use fwhm %s for CR/BAD interpolation"%fwhm)
         logging.info("Interpolating BPM/BAD pix mask")
         ip_isr.isr.interpolateFromMask(self.mi, fwhm, growFootprints=0, maskName='BAD')
@@ -499,12 +499,12 @@ class CosmicMasker(BaseMasker):
         tCR = time.time()
         logging.info("Starting CR finder")
         self.crs = measAlg.findCosmicRays(self.mi, psf, background, pexConfig.makePolicy(crConfig))
-        logging.info("Found CR in %s for: %s " % (elapsed_time(tCR,verb=False),self.fileName)
+        logging.info("Found CR in %s for: %s" % (elapsed_time(tCR,verb=False),self.image.filename))
 
         # Dilate interpolation working on the mi element
         if self.dilateCR and self.interpCR:
             logging.info("Dilating CR pix mask by %s pixel(s):" % self.nGrowCR)
-            ip_isr.isr.interpolateFromMask(self.mi, fwhm, growFootprints=self.nGrowCR, maskName = 'CR')
+            ip_isr.isr.interpolateFromMask(self.mi, fwhm, growFootprints=self.nGrowCR,maskName='CR')
   
     def fix_pixels_CR(self):
         """
@@ -620,7 +620,7 @@ class StreakMasker(BaseMasker):
         ####################################################
 
         tSTREAKS = time.time()
-        loggint.info("Starting streak finder")
+        logging.info("Starting streak finder")
 
         # Read in the background image nd-array
         self.BKG    = self.read_bkg_image(self.bkgfile)
@@ -802,7 +802,7 @@ class StreakMasker(BaseMasker):
 
     def write_streak_objects(self):
         if self.streaksfile:
-            outName = self.streaksfile
+            outname = self.streaksfile
         else:
             basename = os.path.basename(self.image.outname)
             outbase = basename.split('.fit')[0]+'_streaks.fits'
