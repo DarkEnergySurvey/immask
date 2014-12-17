@@ -30,7 +30,7 @@ import scipy.ndimage as ndimage
 from scipy.optimize import fmin
 from scipy.spatial  import cKDTree
 import matplotlib
-#matplotlib.use('Agg')
+matplotlib.use('Agg')
 import matplotlib.path
 
 from despyutils import wcsutil
