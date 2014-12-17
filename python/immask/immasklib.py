@@ -243,6 +243,13 @@ class DESImage(object):
         ofits.write(self.OUT_MSK,header=self.h_msk,compress=self.compress,tile_dims=self.tile_dims)
         # The Weight
         ofits.write(self.OUT_WGT,header=self.h_wgt,compress=self.compress,tile_dims=self.tile_dims)
+
+        # Update the header information
+        timenow   = time.asctime() # Time stamp for new fits files
+        rec=dict(name='DESIMMSK',value=timenow,comment="DESDM immask image")
+        ofits[0].write_keys([rec])
+        ofits[0].write_history("DESDM: %s"%' '.join(sys.argv))
+
         # Close the file
         ofits.close()
         logging.info("Wrote: %s" % self.outname)
@@ -543,12 +550,13 @@ class CosmicMasker(BaseMasker):
         """
         Add records to the header of the fits files
         """
-        timenow   = time.asctime() # Time stamp for new fits files
         rec1 = {'name':'DESNCRAY', 'value':len(self.crs),'comment':"Number of cosmic rays masked"}
-        rec2 = {'name':'DESDMCR',  'value':timenow,      'comment':"Date DESDM CRs masked on image"}
-        for h in self.image.headers:
-            h.add_record(rec1)
-            h.add_record(rec2)
+
+        # ADW: Should only update science header
+        #for h in self.image.headers:
+        #    h.add_record(rec1)
+        #    h.add_record(rec2)
+        self.image.h_sci.add_record(rec1)
 
     
 class StreakMasker(BaseMasker):
@@ -789,7 +797,9 @@ class StreakMasker(BaseMasker):
         self.image.OUT_MSK[ypix,xpix] = self.image.OUT_MSK[ypix,xpix] | self.setbit 
         # and zero out the weight
         self.image.OUT_WGT[ypix,xpix] = 0
-         
+        # and update the header
+        self.update_header()
+
         logging.info("Ran streaks in %s."%elapsed_time(tSTREAKS,verb=False))
 
         # Draw Plots
@@ -916,6 +926,14 @@ class StreakMasker(BaseMasker):
             logging.info("No template Found --> calculating Hough normalization...")
             template_image = (np.ones(self.searchIm.shape,dtype=bool) & ~self.masked)
             self.template = Hough(template_image).transform()[0]
+
+    def update_header(self):
+        """
+        Add records to the header of the fits files
+        """
+        rec1 = {'name':'DESNSTRK', 'value':len(self.mask_objs),'comment':"Number of streaks masked"}
+        self.image.h_sci.add_record(rec1)
+
 
     # This is the start of routines that are more or less
     # loosely bound to the StreakMasker class. The first
