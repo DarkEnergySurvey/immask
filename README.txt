@@ -10,7 +10,7 @@ Requires:
  matplotlib: http://matplotlib.org/ version 1.2.0 or above
  fitsio:     https://github.com/esheldon/fitsio version 0.9.4 or above (RICE compression enabled)
  pyhough:    https://github.com/erykoff/pyhough  
- despyutils: For transplanted wcsutil from Erin Sheldon
+ despyastro: For transplanted wcsutil from Erin Sheldon
 
 To install locally in $HOME:
 
@@ -37,11 +37,13 @@ To run on NCSA cosmology cluster via eups:
 unsetenv EUPS_DIR
 unsetenv EUPS_PATH
 
-source /des002/apps/RHEL6/dist/eups/desdm_eups_setup.csh
+# For DIST section
+source /work/apps/RHEL6/dist/eups/desdm_eups_setup.csh
+setup -v immask 0.3.3+0
 
-setup cfitsio_shared        3.360+3
-setup immask                0.2.2+0
-setup lsstset               7.1.0+4  
+# For DEV section
+source /work/apps/RHEL6/dev/eups/desdm_eups_setup.csh
+setup -v immask 0.3.3+0
 
 
 To Do:
