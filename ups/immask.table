@@ -1,6 +1,8 @@
-setupRequired("fitsio 0.9.6+0")
-setupRequired("pyhough 0.1+6")
-setupRequired("despyastro 0.3.0+0")
+setupRequired(fitsio 0.9.6+0)
+setupRequired(pyhough 0.1+6)
+setupRequired(despyastro 0.3.0+0)
+setupRequired(matplotlib 1.2.0+17)
+
 
 # LSST META package with internal and external packages 
 setupRequired("LSSTimmask 0.2.2+1")
