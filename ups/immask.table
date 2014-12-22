@@ -1,6 +1,6 @@
-setupRequired("fitsio 0.9.5.1rc1+5")
+setupRequired("fitsio 0.9.6+0")
 setupRequired("pyhough 0.1+6")
-setupRequired("despyutils 0.1.8+13")
+setupRequired("despyastro 0.3.0+0")
 
 # LSST META package with internal and external packages 
 setupRequired("LSSTimmask 0.2.2+1")
