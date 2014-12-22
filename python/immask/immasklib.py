@@ -33,7 +33,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.path
 
-from despyutils import wcsutil
+from despyastro import wcsutil
 from pyhough.pyhough_lib import Hough
 
 
