@@ -26,7 +26,7 @@ import collections
 import scipy.ndimage as ndimage
 from scipy.optimize import fmin
 from scipy.spatial  import cKDTree
-from despyutils import wcsutil
+from despyastro import wcsutil
 from pyhough.pyhough_lib import Hough
 import matplotlib
 matplotlib.use('Agg')
@@ -222,7 +222,7 @@ class DESIMA:
         """
         Create a specific boolean masks to temporaryly deal with BPM
         interpolation Mask for the BAD pixels mask, this won't be
-        requited if all of the BPM are masked by imdetrend in the
+        required if all of the BPM are masked by imdetrend in the
         future. It assumes the following bit from the maskbit plane:
          
             BADbit    = 1
@@ -250,7 +250,8 @@ class DESIMA:
         # Temporaryly change the values of BAD and INTERP pixels from 5
         # to 4 for the MSK ndarray as we do not want to interpolate twice.
         self.MSK[masked_bad_interp] = 4
-  
+
+        self.masked_bad_interp = masked_bad_interp
   
     def make_lsst_image(self):
         import lsst.afw.image  as afwImage
@@ -381,6 +382,8 @@ class DESIMA:
         # Create a boolean selection CR-mask and INTRP from the requested bits
         masked_interp = (self.mska & INTERPbit) > 0 
         masked_cr     = (self.mska & CRbit) > 0
+        # The bad pixels that were interpolated before CR detection
+        masked_bad_interp = self.masked_bad_interp
         NCR           = len(masked_cr[masked_cr==True])
         print "# Detected:   %d CRs in %s " % (len(self.crs),self.fileName)
         print "# Containing: %d CR-pixels" % NCR
@@ -398,8 +401,9 @@ class DESIMA:
             self.OUT_MSK[masked_interp]  = 4  | self.OUT_MSK[masked_interp]
          
         # 3. The Weight
-        self.OUT_WGT[masked_cr]       = 0 # PLEASE REVISE
-        self.OUT_WGT[masked_interp]   = 0 # PLEASE REVISE
+        self.OUT_WGT[masked_cr]         = 0 # Set to zero weight CR-detected and interpolated pixels
+        self.OUT_WGT[masked_bad_interp] = 0 # Set to zero weight extra bad-pixels interpolated by immask
+        #self.OUT_WGT[masked_interp]   = 0 # PLEASE REVISE -- this was wrong !!!
   
     def update_hdr_CR(self):
         """

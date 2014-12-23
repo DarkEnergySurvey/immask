@@ -1,8 +1,10 @@
-setupRequired("scipy 0.12.0+5")
-setupRequired("fitsio 0.9.5.1rc1+2")
-setupRequired("pyhough 0.1+3")
-setupRequired("matplotlib 1.2.0+12")
-setupRequired("despyutils 0.1.8+0")
+setupRequired(fitsio 0.9.6+0)
+setupRequired(pyhough 0.1+6)
+setupRequired(despyastro 0.3.0+0)
+setupRequired(matplotlib 1.2.0+17)
+
+# LSST META package with internal and external packages 
+setupRequired(LSSTimmask 0.2.2+1)
 
 envAppend(PYTHONPATH, ${PRODUCT_DIR}/python)
 envAppend(PATH, ${PRODUCT_DIR}/bin)
