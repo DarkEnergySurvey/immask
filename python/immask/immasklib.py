@@ -526,6 +526,8 @@ class CosmicMasker(BaseMasker):
         # Create a boolean selection CR-mask and INTRP from the requested bits
         masked_interp = (self.mska & INTERPbit) > 0 
         masked_cr     = (self.mska & CRbit) > 0
+        # The bad pixels that were interpolated before CR detection
+        masked_bad_interp = self.masked_bad_interp
         NCR           = len(masked_cr[masked_cr==True])
         logging.info("Detected:   %d CRs in %s"%(len(self.crs),self.image.filename))
         logging.info("Containing: %d CR-pixels"%NCR)
@@ -543,8 +545,9 @@ class CosmicMasker(BaseMasker):
             self.image.OUT_MSK[masked_interp] = 4 | self.image.OUT_MSK[masked_interp]
          
         # 3. The Weight
-        self.image.OUT_WGT[masked_cr]     = 0 # PLEASE REVISE
-        self.image.OUT_WGT[masked_interp] = 0 # PLEASE REVISE
+        self.image.OUT_WGT[masked_cr]         = 0 # Set to zero weight CR-detected and interpolated pixels
+        self.image.OUT_WGT[masked_bad_interp] = 0 # Set to zero weight extra bad-pixels interpolated by immask
+        #self.image.OUT_WGT[masked_interp]   = 0 # PLEASE REVISE -- this was wrong !!!
   
     def update_header(self):
         """
