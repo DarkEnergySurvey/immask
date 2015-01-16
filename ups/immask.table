@@ -3,9 +3,8 @@ setupRequired(pyhough 0.1+6)
 setupRequired(despyastro 0.3.0+0)
 setupRequired(matplotlib 1.2.0+17)
 
-
 # LSST META package with internal and external packages 
-setupRequired("LSSTimmask 0.2.2+1")
+setupRequired(LSSTimmask 0.2.2+1)
 
 envAppend(PYTHONPATH, ${PRODUCT_DIR}/python)
 envAppend(PATH, ${PRODUCT_DIR}/bin)
