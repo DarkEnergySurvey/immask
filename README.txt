@@ -39,11 +39,11 @@ unsetenv EUPS_PATH
 
 # For DIST section
 source /work/apps/RHEL6/dist/eups/desdm_eups_setup.csh
-setup -v immask 0.3.3+0
+setup -v immask 0.3.4+0
 
 # For DEV section
 source /work/apps/RHEL6/dev/eups/desdm_eups_setup.csh
-setup -v immask 0.3.3+0
+setup -v immask 0.3.4+0
 
 
 To Do:
