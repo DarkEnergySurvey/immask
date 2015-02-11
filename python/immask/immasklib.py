@@ -396,6 +396,8 @@ class CosmicMasker(BaseMasker):
         # to 4 for the MSK ndarray as we do not want to interpolate twice.
         self.image.MSK[masked_bad_interp] = 4
   
+        self.masked_bad_interp = masked_bad_interp
+
   
     def make_lsst_image(self):
         import lsst.afw.image  as afwImage
