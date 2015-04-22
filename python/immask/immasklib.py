@@ -8,12 +8,15 @@ $LastChangedDate::                      $:  # Date of last commit.
 
 Suite of fuctions and class for the DESDM immask python module.
 
-ToDo:
+TODO:
  - Masking bits need to be taken from imsupport
+ - Iterate through finding streaks (remove each streak before finding next)?
+ - Avoid filled corner cases by checking the fraction of area above the streak 
+   that is above sky threshold.
 
 @authors: Felipe Menanteau    <felipe@illinois.edu>
-@authors: Eli Rykoff          <rykoff@slac.stanford.edu>
 @authors: Alex Drlica-Wagner  <kadrlica@fnal.gov>
+@authors: Eli Rykoff          <rykoff@slac.stanford.edu>
 """
 
 import os
@@ -142,8 +145,8 @@ class DESImage(object):
        try:
            pixscale = header['PIXSCAL1']
        except:
-           pixscale = 0.27
-           logging.warning("Could not read PIXSCAL1 keyword from Science HDU\nWill default to %s" % pixscale)
+           pixscale = 0.263
+           logging.warning("Could not read PIXSCAL1 keyword from science HDU\nWill default to %s" % pixscale)
      
        # Read in the FWHM
        try:
@@ -152,9 +155,9 @@ class DESImage(object):
        except:
            fwhm = 5.5
            fwhm_arcsec = fwhm*pixscale
-           logging.warning("Could not read FWHM keyword from Science HDU\nWill use FWHM=%s pixels instead" % fwhm)
+           logging.warning("Could not read FWHM keyword from science HDU\nWill use FWHM=%s pixels instead" % fwhm)
      
-       # Into arcseconds
+       # Make sure that FWHM is not too large
        if fwhm_arcsec > 1.2:
            logging.warning("Header FWHM value: %.2f[arcsec] / %.1f[pixels] is too high -- should not be trusted" % (fwhm_arcsec,fwhm))
 
@@ -162,7 +165,7 @@ class DESImage(object):
        if fwhm_arcsec < 2*pixscale:
            logging.warning("Header FWHM value: %.2f[arcsec] / %.1f[pixels] is too small -- forcing it to 2 pix" % (fwhm_arcsec,fwhm))
            fwhm = 2.0
-          
+
        return fwhm
 
     def read(self):
@@ -570,7 +573,7 @@ class StreakMasker(BaseMasker):
     """
 
     defaults = OrderedDict([
-        ['bkgfile'     , dict(required=True,
+        ['bkgfile'     , dict(default=None,
                               help="Input background FITS file (fz/fits)")],
         ['draw'        , dict(action='store_true',
                               help="Use matplotlib to draw diagnostic plots.")],
@@ -636,11 +639,15 @@ class StreakMasker(BaseMasker):
         logging.info("Starting streak finder")
 
         # Read in the background image nd-array
-        self.BKG    = self.read_bkg_image(self.bkgfile)
-        #self.BKG    = DESImage(self.bkgfile).BKG
+        if self.bkgfile is not None:
+            self.BKG    = self.read_bkg_image(self.bkgfile)
+            #self.BKG    = DESImage(self.bkgfile).BKG
          
-        # Make a background substracted image
-        self.subIm = self.image.OUT_SCI - self.BKG
+            # Make a background substracted image
+            self.subIm = self.image.OUT_SCI - self.BKG
+        else:
+            self.subIm = self.image.OUT_SCI
+
         # Create a boolean selection mask from the requested bits
         self.masked = ((self.image.OUT_MSK & self.maskbits ) > 0)
          
@@ -700,13 +707,17 @@ class StreakMasker(BaseMasker):
         self.detect_objs = self.streak_statistics(self.trans, self.rho, self.theta, good, rev)
         self.detect_objs['BINNING'][:] = self.bin_factor
          
+        logging.info("Performing quality cuts...")
         # Make some preliminary quality cuts
         cut = np.zeros(len(self.detect_objs),dtype=self.detect_objs['CUT'].dtype)
         # Perpendicular objects that look like a readout error...
-        cut |= (np.abs(self.detect_objs['SLOPE']) > 150) & (self.detect_objs['WIDTH'] <= 3)
-        # Some additional cuts that could be useful -- future
+        perp_cut = (np.abs(self.detect_objs['SLOPE']) > 150) & (self.detect_objs['WIDTH'] <= 3)
+        logging.info("\tCutting %i objects with: SLOPE > %s"%(perp_cut.sum(),150))
+        cut |= perp_cut
+        # Some additional cuts that could be useful...
         #cut |= ... # Central bias jump (x-dir)
         #cut |= ... # Central bias jump (y-dir)
+        #cut |= ... # Edge brightness
         self.detect_objs['CUT'][np.nonzero(cut)] = 1
         logging.info("Found %i lines passing quality cuts" % (self.detect_objs['CUT']==0).sum())
          
@@ -729,13 +740,18 @@ class StreakMasker(BaseMasker):
         merge_objs = self.streak_statistics(self.trans, self.rho, self.theta, unique, rev)
         merge_objs['BINNING'][:] = self.bin_factor
          
+        logging.info("Performing quality cuts...")
         # More quality cuts
         cut = np.zeros(len(merge_objs),dtype=merge_objs['CUT'].dtype)
         # Objects that are too wide...
-        cut |= (merge_objs['WIDTH'] > self.max_width/float(self.bin_factor))
-        # Objects that span too large an opening angle -- to curvy
+        width_cut = (merge_objs['WIDTH'] > self.max_width/float(self.bin_factor))
+        logging.info("\tCutting %i objects with: WIDTH > %s"%(width_cut.sum(),self.max_width))
+        cut |= width_cut
+        # Objects that span too large an opening angle -- too curvy
         delta_theta = np.abs(self.theta[merge_objs['XMAX']] - self.theta[merge_objs['XMIN']])
-        cut |= delta_theta > np.radians(self.max_angle)
+        theta_cut = delta_theta > np.radians(self.max_angle)
+        logging.info("\tCutting %i objects with: THETA > %s"%(theta_cut.sum(),self.max_angle))
+        cut |= theta_cut
          
         merge_objs['CUT'][np.nonzero(cut)] = 1
         logging.info("Found %i streaks passing quality cuts"%((merge_objs['CUT']==0).sum()))
