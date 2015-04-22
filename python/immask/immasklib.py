@@ -646,6 +646,7 @@ class StreakMasker(BaseMasker):
             # Make a background substracted image
             self.subIm = self.image.OUT_SCI - self.BKG
         else:
+            self.BKG   = None
             self.subIm = self.image.OUT_SCI
 
         # Create a boolean selection mask from the requested bits
