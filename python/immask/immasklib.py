@@ -8,10 +8,10 @@ $LastChangedDate::                      $:  # Date of last commit.
 Suite of fuctions and class for the DESDM immask python module.
 
 TODO:
- - Masking bits need to be taken from imsupport
  - Iterate through finding streaks (remove each streak before finding next)?
  - Avoid filled corner cases by checking the fraction of area above the streak 
    that is above sky threshold.
+ - Use despyfits.DESImage rather than the local version
 
 @authors: Felipe Menanteau    <felipe@illinois.edu>
 @authors: Alex Drlica-Wagner  <kadrlica@fnal.gov>
@@ -37,7 +37,7 @@ import matplotlib.path
 
 from despyastro import wcsutil
 from pyhough.pyhough_lib import Hough
-
+import despyfits.maskbits as MASKBITS
 
 ######################
 ### Python Logging ###
@@ -349,26 +349,47 @@ class CosmicMasker(BaseMasker):
   
     def set_DECamMaskPlaneDict(self):
         """
-        Dictionary to translate from DECam mask plane to LSST definition
-        To see all mask planes:
+        Dictionary to map the LSST bit names (e.g., 'BAD', 'SAT',
+        etc.) to the DECam mask bits (e.g., 'BADPIX_BPM',
+        'BADPIX_SATURATE', etc.).
+
+        This is a bit convoluted because the findCosmicRays routine
+        explicitly uses the 'BAD', 'SAT', 'INTRP', 'CR', and
+        'DETECTED' bits, so these must be defined by name.
+        Additionally the LSST UMask only allows 16 bits, so we need to
+        re-map the DES bitmask names to these predefined bits. Bits
+        that do not already exist in the LSST framework (e.g.,
+        SSXTALK) are added as new bits. The findCosmicRays routine
+        ignores all bad pixel except for those explicitly mentioned
+        above (for example 'SUSPECT' would be ignored).
+
+        To be able to re-run on images, we also define an independent
+        DES 'CRAY' bit in addition to the LSST 'CR' bit. And if that
+        wasn't enough, LSST has a different convention for defining
+        bits (by bit position rather than integer representation).
+
+        To see all LSST mask planes:
               print msk.printMaskPlanes()
+
         """
+        def int2bit(value):
+            return int(np.log(value)/np.log(2))
+
         self.DECamMaskPlaneDict = dict(
-            BAD       = 0,  # set in bpm (hot/dead pixel/column) (was BPM)
-            SAT       = 1,  # saturated pixel (was SATURATE)
-            INTRP     = 2,  # interpolated pixel (was INTERP)
-            LOW       = 3,  # too little signal- i.e. poor read
-            CRAY      = 4,  # cosmic ray pixel N.b. not CR --- we'll set that ourselves later
-                            # CR is the name used in the LSST framework, and will supersede CRAY!
-            DETECTED  = 5,  # bright star pixel (was STAR)
-            TRAIL     = 6,  # bleed trail pixel
-            EDGEBLEED = 7,  # edge bleed pixel
-            SSXTALK   = 8,  # pixel potentially effected by xtalk from super-saturated source
-            EDGE      = 9,  # pixel flagged to exclude CCD glowing edges
-            STREAK    = 10, # streak 
-            FIX       = 11, # a bad pixel that was fixed
+            BAD       = int2bit(MASKBITS.BADPIX_BPM), 
+            SAT       = int2bit(MASKBITS.BADPIX_SATURATE),
+            INTRP     = int2bit(MASKBITS.BADPIX_INTERP),
+            CRAY      = int2bit(MASKBITS.BADPIX_CRAY),
+            DETECTED  = int2bit(MASKBITS.BADPIX_STAR),
+            TRAIL     = int2bit(MASKBITS.BADPIX_TRAIL),
+            EDGEBLEED = int2bit(MASKBITS.BADPIX_EDGEBLEED),
+            SSXTALK   = int2bit(MASKBITS.BADPIX_SSXTALK),
+            EDGE      = int2bit(MASKBITS.BADPIX_EDGE),
+            STREAK    = int2bit(MASKBITS.BADPIX_STREAK),
+            SUSPECT   = int2bit(MASKBITS.BADPIX_SUSPECT),
+            BADAMP    = int2bit(MASKBITS.BADPIX_BADAMP),
             )
-  
+
     def make_BAD_mask(self):
         """
         Create a specific boolean masks to temporaryly deal with BPM
@@ -387,20 +408,20 @@ class CosmicMasker(BaseMasker):
         # important to note that we modify only the MSK ndarray, which
         # is the one used by the LSST framework. The original,
         # unmodified values are keept in the copy for output OUT_MSK.
-        masked_bad        = (self.image.MSK & 1) > 0
-        masked_bad_interp = ((self.image.MSK & 4) > 0) & masked_bad
+        masked_bad        = (self.image.MSK & MASKBITS.BADPIX_BPM) > 0
+        masked_bad_interp = ((self.image.MSK & MASKBITS.BADPIX_INTERP) > 0) & masked_bad
          
         # Create a boolean mask of the glowing edges, we don't need to
         # keep the original values for later, as they are kept in the OUT_MSK copy.
-        masked_edge = (self.image.MSK & 512) > 0
+        masked_edge = (self.image.MSK & MASKBITS.BADPIX_EDGE) > 0
          
         # Temporaly change values of 513 to 512 in order to avoid
         # interpolating over glowing edges of ccds also labeled as BAD (512+1=513)
-        self.image.MSK[masked_edge] = 512
+        self.image.MSK[masked_edge] = MASKBITS.BADPIX_EDGE
          
         # Temporaryly change the values of BAD and INTERP pixels from 5
         # to 4 for the MSK ndarray as we do not want to interpolate twice.
-        self.image.MSK[masked_bad_interp] = 4
+        self.image.MSK[masked_bad_interp] = MASKBITS.BADPIX_INTERP
   
         self.masked_bad_interp = masked_bad_interp
 
@@ -442,8 +463,9 @@ class CosmicMasker(BaseMasker):
         # the one we should use when handlying the cosmic rays detected
         # with the LSST function.
         # *** Only need for images with existing CRAY plane ****
-        CRAY     = self.msk.getPlaneBitMask("CRAY") # Gets the value for CR (i.e. 256)
-        cr_prev  = np.where(np.bitwise_and(self.mska, CRAY))
+        CRAY     = self.msk.getPlaneBitMask("CRAY") # Gets the LSST value for DES cosmic rays
+        CR       = self.msk.getPlaneBitMask("CR")   # Gets the LSST value for LSST cosmic rays
+        cr_prev  = np.where(self.mska & CRAY)
         NCR_prev = len(cr_prev[0])
         if NCR_prev > 0:
             logging.info("CRs previously found in image -- will be fixed before CR")
@@ -452,8 +474,10 @@ class CosmicMasker(BaseMasker):
             self.vara[cr_prev]    = median_rep # The LSST handle
             self.image.OUT_WGT[cr_prev] = median_rep # The original array
             logging.info("Fixing mask plane for those CR-pixels too ")
-            self.mska[cr_prev]    = self.mska[cr_prev]    - 16 # The LSST handle
-            self.image.OUT_MSK[cr_prev] = self.image.OUT_MSK[cr_prev] - 16 # The original array
+            # Remove the LSST CR bit from the mask array
+            self.mska[cr_prev]    = self.mska[cr_prev] - CR 
+            # Remove the DES CRAY bit from the image mask
+            self.image.OUT_MSK[cr_prev] = self.image.OUT_MSK[cr_prev] - MASKBITS.BADPIX_CRAY 
         # ************************************************************
         # Make an LSST masked image (science, mask, and weight) 
         self.mi = afwImage.makeMaskedImage(self.sci, self.msk, self.var)
@@ -548,9 +572,9 @@ class CosmicMasker(BaseMasker):
         self.image.OUT_SCI = self.scia.copy() # This is the output now
          
         # 2. The Mask
-        self.image.OUT_MSK[masked_cr] = 16 | self.image.OUT_MSK[masked_cr]  
+        self.image.OUT_MSK[masked_cr] = MASKBITS.BADPIX_CRAY | self.image.OUT_MSK[masked_cr]  
         if self.interpCR:
-            self.image.OUT_MSK[masked_interp] = 4 | self.image.OUT_MSK[masked_interp]
+            self.image.OUT_MSK[masked_interp] = MASKBITS.BADPIX_INTERP | self.image.OUT_MSK[masked_interp]
          
         # 3. The Weight
         self.image.OUT_WGT[masked_cr]         = 0 # Set to zero weight CR-detected and interpolated pixels
@@ -611,9 +635,9 @@ class StreakMasker(BaseMasker):
         # For masking
         ['mask_factor'  , dict(default=1.5, type=float, 
                                help="Factor to increase streak width for masking")],
-        ['maskbits'     , dict(default=1023,type=int,
+        ['maskbits'     , dict(default=MASKBITS.BADPIX_STREAK-1,type=int,
                                help="Ignore these mask bits ")],
-        ['setbit'       , dict(default=1024,type=int,
+        ['setbit'       , dict(default=MASKBITS.BADPIX_STREAK,type=int,
                                help="New streak mask bit value")],
         ['maxmask'      , dict(default=1000,type=int,
                                help="Maximum number of streaks to mask [NOT IMPLEMENTED]")],
