@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-
 """
 $Id$
 $Rev::                                  $:  # Revision of last commit.
@@ -25,7 +24,7 @@ import fitsio
 import time
 import copy
 import argparse
-from collections import OrderedDict
+from collections import OrderedDict as odict
 import logging
 
 import numpy as np
@@ -186,6 +185,11 @@ class DESImage(object):
         self.h_sci = self.ifits[sci_hdu].read_header()
         self.h_msk = self.ifits[msk_hdu].read_header()
         self.h_wgt = self.ifits[wgt_hdu].read_header()     
+        # Get the HDU names
+        self.sci_hdu_name = self.ifits[sci_hdu].get_extname()
+        self.msk_hdu_name = self.ifits[msk_hdu].get_extname()
+        self.wgt_hdu_name = self.ifits[wgt_hdu].get_extname()
+
         # Get the image size to set the allowed fraction of image to be already masked
         (self.ny,self.nx) = self.SCI.shape
         # Pass them up
@@ -241,11 +245,11 @@ class DESImage(object):
         # Write the output file, one HDU at a time
         ofits = fitsio.FITS(self.outname,'rw',clobber=True)
         # Science -- use scia -- ndarray representation
-        ofits.write(self.OUT_SCI,header=self.h_sci,compress=self.compress,tile_dims=self.tile_dims)
+        ofits.write(self.OUT_SCI,header=self.h_sci,compress=self.compress,tile_dims=self.tile_dims,extname=self.sci_hdu_name)
         # The Mask
-        ofits.write(self.OUT_MSK,header=self.h_msk,compress=self.compress,tile_dims=self.tile_dims)
+        ofits.write(self.OUT_MSK,header=self.h_msk,compress=self.compress,tile_dims=self.tile_dims,extname=self.msk_hdu_name)
         # The Weight
-        ofits.write(self.OUT_WGT,header=self.h_wgt,compress=self.compress,tile_dims=self.tile_dims)
+        ofits.write(self.OUT_WGT,header=self.h_wgt,compress=self.compress,tile_dims=self.tile_dims,extname=self.wgt_hdu_name)
 
         # Update the header information
         timenow   = time.asctime() # Time stamp for new fits files
@@ -270,7 +274,7 @@ class BaseMasker(object):
       which is also converted into a argparse object
     """
 
-    defaults = OrderedDict([])
+    defaults = odict([])
 
     def __init__(self, image, outdir, **kwargs):
         """ Create and run the masker """
@@ -305,7 +309,7 @@ class BaseMasker(object):
 
         parser = argparse.ArgumentParser(**kwargs)
         group = parser.add_argument_group(title)
-        args = OrderedDict(cls.defaults)
+        args = odict(cls.defaults)
         for key,value in args.items():
             group.add_argument('--%s'%key,dest=key,**value)
         return parser
@@ -313,7 +317,7 @@ class BaseMasker(object):
 class CosmicMasker(BaseMasker):
 
     ### Command line arguments for cosmic-ray masking
-    defaults = OrderedDict([
+    defaults = odict([
         ['interpCR'  , dict(default=True, action="store_true", 
                             help="Interpolate CR in science image.")],
         ['noInterpCR', dict(action="store_true", 
@@ -364,7 +368,6 @@ class CosmicMasker(BaseMasker):
             STREAK    = 10, # streak 
             FIX       = 11, # a bad pixel that was fixed
             )
-  
   
     def make_BAD_mask(self):
         """
@@ -572,7 +575,7 @@ class StreakMasker(BaseMasker):
     Masking satellite, UFO, etc. streaks.
     """
 
-    defaults = OrderedDict([
+    defaults = odict([
         ['bkgfile'     , dict(default=None,
                               help="Input background FITS file (fz/fits)")],
         ['draw'        , dict(action='store_true',
@@ -643,7 +646,7 @@ class StreakMasker(BaseMasker):
             self.BKG    = self.read_bkg_image(self.bkgfile)
             #self.BKG    = DESImage(self.bkgfile).BKG
          
-            # Make a background substracted image
+            # Make a background subtracted image
             self.subIm = self.image.OUT_SCI - self.BKG
         else:
             self.BKG   = None
