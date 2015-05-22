@@ -38,6 +38,7 @@ import matplotlib.path
 from despyastro import wcsutil
 from pyhough.pyhough_lib import Hough
 import despyfits.maskbits as MASKBITS
+from despyfits.DESImage import DESImage
 
 ######################
 ### Python Logging ###
@@ -71,196 +72,6 @@ def create_logger(level=logging.NOTSET):
     logger.setLevel(level)
     return logger
     
-
-#####################
-### Image objects ###
-#####################
-
-class DESImage(object):
-    """
-    A Class to handle DECam fits/fits.fz files. Uses fitsio to 
-    open/read/close files. 
-    """
-
-    # Should not require outname and outdir
-    def __init__(self, filename, outname, **kwargs):
-        self.filename  = self.extract_filename(filename)
-        self.outname   = self.extract_filename(outname)
-
-        # Decide whether output should be compressed
-        self.compress  = kwargs.get('compress',False)
-
-        # Gets SCI, MSK, WGT and created VAR
-        self.read()
-        # Make shallow copies of HDUs and created VAR (OUT_*)
-        self.copy_ndarrays() 
-
-    def __repr__(self):
-        return repr(self.ifits)
-
-    def __str__(self):
-        return str(self.ifits)
-
-    # This could be moved to a utils module
-    @staticmethod
-    def extract_filename(filename):
-        """ Safe extraction of filename """
-        if filename[0] == "!": filename=filename[1:]
-        filename = os.path.expandvars(filename)
-        filename = os.path.expanduser(filename)
-        return filename
-
-    def get_hdu_numbers(self):
-        """
-        Simple function to figure the HDU extensions for DESDM fits files
-        in:  a fitsio.FITS object
-        out: (sci_ext, msk_ext, wgt_ext) extension numbers 
-        """
-        FITS = self.ifits
-
-        sci_ext = None
-        msk_ext = None
-        wgt_ext = None
-        # Loop trough each HDU on the fits file
-        for i in range(len(FITS)):
-            h = FITS[i].read_header()       # Get the header
-            if ('DES_EXT' in h.keys()) :
-                extname = h['DES_EXT'].strip()
-                if   (extname == 'IMAGE') : sci_ext = i
-                elif (extname == 'MASK')  : msk_ext = i
-                elif (extname == 'WEIGHT'): wgt_ext = i
-         
-        if (sci_ext is None or msk_ext is None or wgt_ext is None):
-            raise ValueError("Cannot find IMAGE, MASK, WEIGHT extensions via DES_EXT keyword")
-         
-        return sci_ext,msk_ext,wgt_ext
-
-    def get_FWHM(self):
-       """ Get the FHWM of the image in pixels. """
-       FITS = self.ifits
-       sci_hdu = self.sci_hdu
-       header = FITS[sci_hdu].read_header()
-       # Read in the pixelscale
-       try:
-           pixscale = header['PIXSCAL1']
-       except:
-           pixscale = 0.263
-           logging.warning("Could not read PIXSCAL1 keyword from science HDU\nWill default to %s" % pixscale)
-     
-       # Read in the FWHM
-       try:
-           fwhm        = header['FWHM']
-           fwhm_arcsec = fwhm*pixscale
-       except:
-           fwhm = 5.5
-           fwhm_arcsec = fwhm*pixscale
-           logging.warning("Could not read FWHM keyword from science HDU\nWill use FWHM=%s pixels instead" % fwhm)
-     
-       # Make sure that FWHM is not too large
-       if fwhm_arcsec > 1.2:
-           logging.warning("Header FWHM value: %.2f[arcsec] / %.1f[pixels] is too high -- should not be trusted" % (fwhm_arcsec,fwhm))
-
-       # Make sure that FWHM is not too small either
-       if fwhm_arcsec < 2*pixscale:
-           logging.warning("Header FWHM value: %.2f[arcsec] / %.1f[pixels] is too small -- forcing it to 2 pix" % (fwhm_arcsec,fwhm))
-           fwhm = 2.0
-
-       return fwhm
-
-    def read(self):
-        """
-        Read image HDUs as ndarrays and headers as dictionaries 
-        using fitsio.
-        """
-        # Get the fitsio element -- we'll modify this in place
-        logging.info("Reading in extensions and headers for %s" % self.filename)
-        self.ifits = fitsio.FITS(self.filename,'r')
-        sci_hdu, msk_hdu, wgt_hdu = self.get_hdu_numbers()
-        # Read in the Science, Mask and Weight Images array with fitsio, as we'll
-        # need to write them out using fitsio once we are done with them
-        self.SCI = self.ifits[sci_hdu].read()
-        self.MSK = self.ifits[msk_hdu].read()
-        self.WGT = self.ifits[wgt_hdu].read()
-        # Now let's read the headers
-        self.h_sci = self.ifits[sci_hdu].read_header()
-        self.h_msk = self.ifits[msk_hdu].read_header()
-        self.h_wgt = self.ifits[wgt_hdu].read_header()     
-        # Get the HDU names
-        self.sci_hdu_name = self.ifits[sci_hdu].get_extname()
-        self.msk_hdu_name = self.ifits[msk_hdu].get_extname()
-        self.wgt_hdu_name = self.ifits[wgt_hdu].get_extname()
-
-        # Get the image size to set the allowed fraction of image to be already masked
-        (self.ny,self.nx) = self.SCI.shape
-        # Pass them up
-        self.sci_hdu = sci_hdu
-        self.msk_hdu = msk_hdu
-        self.wgt_hdu = wgt_hdu
-        logging.info("Done reading HDU")
-  
-    def copy_ndarrays(self):
-        """
-        Make shallow copies (shallow is enough) of the SCI, MSK and WGT
-        ndarrays using python copy function to preserve the original
-        information of the fits files. We need to do this before they
-        are modified in place by the the LSST framework functions.
-        """
-        logging.info("Making shallow copies of SCI, MSK and WGT ndarrays")
-        self.OUT_SCI = copy.copy(self.SCI)
-        self.OUT_MSK = copy.copy(self.MSK)
-        self.OUT_WGT = copy.copy(self.WGT)
-        # A handy handle
-        self.headers = (self.h_sci,self.h_msk,self.h_wgt)
-        # Let's make a handle for the DESDM object
-        self.DESDMImage = (self.OUT_SCI,self.OUT_MSK,self.OUT_WGT)
-
-    def check_output(self):
-        """
-        Make sure that fpack files have the .fz extension
-        """
-        basename = os.path.basename(self.outname)
-        extname  = os.path.splitext(basename)[1]
-      
-        if self.compress and extname == '.fits':
-            raise IOError ("--compress specified with '.fits' outfile")
-
-        if not self.compress and extname == '.fz':
-            raise IOError ("--compress not specified with '.fz' outfile")
-
-    def write(self):
-        """
-        Use fitsio to write the output file compressed or not
-        """
-
-        # Define type of compresion and tile_dims
-        if self.compress:
-            self.compress  = 'RICE'
-            self.tile_dims = [1,2048]
-        else:
-            self.compress  = None
-            self.tile_dims = None
-         
-        # Check the output name is consistent with compression
-        self.check_output()
-        # Write the output file, one HDU at a time
-        ofits = fitsio.FITS(self.outname,'rw',clobber=True)
-        # Science -- use scia -- ndarray representation
-        ofits.write(self.OUT_SCI,header=self.h_sci,compress=self.compress,tile_dims=self.tile_dims,extname=self.sci_hdu_name)
-        # The Mask
-        ofits.write(self.OUT_MSK,header=self.h_msk,compress=self.compress,tile_dims=self.tile_dims,extname=self.msk_hdu_name)
-        # The Weight
-        ofits.write(self.OUT_WGT,header=self.h_wgt,compress=self.compress,tile_dims=self.tile_dims,extname=self.wgt_hdu_name)
-
-        # Update the header information
-        timenow   = time.asctime() # Time stamp for new fits files
-        rec=dict(name='DESIMMSK',value=timenow,comment="DESDM immask image")
-        ofits[0].write_keys([rec])
-        ofits[0].write_history("DESDM: %s"%' '.join(sys.argv))
-
-        # Close the file
-        ofits.close()
-        logging.info("Wrote: %s" % self.outname)
-
 ######################
 ### Masker objects ###
 ######################
@@ -295,7 +106,10 @@ class BaseMasker(object):
     def write(self):
         """ Write the masker QA files """
         pass
-        
+
+    def update_header(self):
+        pass
+
     def _parse(self, **kwargs):
         for key in np.intersect1d(self.defaults.keys(),kwargs.keys()):
             self.__dict__[key] = kwargs[key]
@@ -340,11 +154,42 @@ class CosmicMasker(BaseMasker):
         """
 
         # Make the individual calls
-        self.make_BAD_mask() # True by default, unless we decide not to.
+        self.make_BAD_mask() 
         self.make_lsst_image()
         self.find_CRs()
         self.fix_pixels_CR()
         self.update_header()
+
+
+    def get_FWHM(self,image):
+       """ Get the FHWM of the image in pixels. """
+       header = image.header
+       # Read in the pixelscale
+       try:
+           pixscale = header['PIXSCAL1']
+       except:
+           pixscale = 0.263
+           logging.warning("Could not read PIXSCAL1 keyword from science HDU\nWill default to %s" % pixscale)
+     
+       # Read in the FWHM
+       try:
+           fwhm        = header['FWHM']
+           fwhm_arcsec = fwhm*pixscale
+       except:
+           fwhm = 5.5
+           fwhm_arcsec = fwhm*pixscale
+           logging.warning("Could not read FWHM keyword from science HDU\nWill use FWHM=%s pixels instead" % fwhm)
+     
+       # Make sure that FWHM is not too large
+       if fwhm_arcsec > 1.2:
+           logging.warning("Header FWHM value: %.2f[arcsec] / %.1f[pixels] is too high -- should not be trusted" % (fwhm_arcsec,fwhm))
+ 
+       # Make sure that FWHM is not too small either
+       if fwhm_arcsec < 2*pixscale:
+           logging.warning("Header FWHM value: %.2f[arcsec] / %.1f[pixels] is too small -- forcing it to 2 pix" % (fwhm_arcsec,fwhm))
+           fwhm = 2.0
+ 
+       return fwhm
 
   
     def set_DECamMaskPlaneDict(self):
@@ -395,12 +240,14 @@ class CosmicMasker(BaseMasker):
         Create a specific boolean masks to temporaryly deal with BPM
         interpolation Mask for the BAD pixels mask, this won't be
         requited if all of the BPM are masked by imdetrend in the
-        future. It assumes the following bit from the maskbit plane:
-         
-            BADbit    = 1
-            INTERPbit = 4
-            EDGEbit   = 512
+        future. It takes the following bit from the maskbit plane:
+            BADPIX_BPM, BADPIX_INTERP, BADPIX_EDGE
         """
+
+        # Copy the image data to temporary arrays that will be altered
+        self.SCI = copy.copy(self.image.data)
+        self.MSK = copy.copy(self.image.mask)
+        self.WGT = copy.copy(self.image.weight)
          
         logging.info("Creating BAD/BPM pixel mask for interpolation")
         # Mask for BAD=1 pixels that have been already interpolated
@@ -408,20 +255,20 @@ class CosmicMasker(BaseMasker):
         # important to note that we modify only the MSK ndarray, which
         # is the one used by the LSST framework. The original,
         # unmodified values are keept in the copy for output OUT_MSK.
-        masked_bad        = (self.image.MSK & MASKBITS.BADPIX_BPM) > 0
-        masked_bad_interp = ((self.image.MSK & MASKBITS.BADPIX_INTERP) > 0) & masked_bad
+        masked_bad        = (self.MSK & MASKBITS.BADPIX_BPM) > 0
+        masked_bad_interp = ((self.MSK & MASKBITS.BADPIX_INTERP) > 0) & masked_bad
          
         # Create a boolean mask of the glowing edges, we don't need to
         # keep the original values for later, as they are kept in the OUT_MSK copy.
-        masked_edge = (self.image.MSK & MASKBITS.BADPIX_EDGE) > 0
+        masked_edge = (self.MSK & MASKBITS.BADPIX_EDGE) > 0
          
         # Temporaly change values of 513 to 512 in order to avoid
         # interpolating over glowing edges of ccds also labeled as BAD (512+1=513)
-        self.image.MSK[masked_edge] = MASKBITS.BADPIX_EDGE
+        self.MSK[masked_edge] = MASKBITS.BADPIX_EDGE
          
         # Temporaryly change the values of BAD and INTERP pixels from 5
         # to 4 for the MSK ndarray as we do not want to interpolate twice.
-        self.image.MSK[masked_bad_interp] = MASKBITS.BADPIX_INTERP
+        self.MSK[masked_bad_interp] = MASKBITS.BADPIX_INTERP
   
         self.masked_bad_interp = masked_bad_interp
 
@@ -439,13 +286,13 @@ class CosmicMasker(BaseMasker):
         # 0 Set up the Mask Plane dictionay for DECam
         self.set_DECamMaskPlaneDict()
         # 1 - Science
-        self.sci = afwImage.ImageF(self.image.SCI)
+        self.sci = afwImage.ImageF(self.SCI)
         # 2- The Mask plane Image and rewrite mask planes into LSST convention
-        self.msk = afwImage.MaskU(self.image.MSK)
+        self.msk = afwImage.MaskU(self.MSK)
         self.msk.conformMaskPlanes(self.DECamMaskPlaneDict) 
          
-        # 3 - The variance Image
-        self.WGT_fixed = np.where(self.image.WGT<=0, self.image.WGT.max()/1e6, self.image.WGT) # Fix values < 0
+        # 3 - The variance Image (could be done in DESImage)
+        self.WGT_fixed = np.where(self.WGT<=0, self.WGT.max()/1e6, self.WGT) # Fix values < 0
         self.VAR = 1/self.WGT_fixed
         self.var = afwImage.ImageF(self.VAR)
         # Into numpy-arrays to handle some numpy fast operations
@@ -454,17 +301,21 @@ class CosmicMasker(BaseMasker):
         self.vara = self.var.getArray()
          
         # **************************************************************
-        # This part is required to rerun cosmic ray masking on existing images,
-        # i.e. ccd images already with cosmic ray on the weight/mask images.
-        # We need to set the 0s in the inverse variance for the existing
-        # cosmic rays (CRAY) to the median. Notice that CRAY is the "fake" name for
-        # the existing cosmic rays mask plane. The plane with the newly
-        # detected one is called "CR" in the LSST frame work and that is
-        # the one we should use when handlying the cosmic rays detected
-        # with the LSST function.
-        # *** Only need for images with existing CRAY plane ****
+        # This part is required to rerun cosmic ray masking on
+        # existing images, i.e. ccd images already with cosmic ray on
+        # the weight/mask images.  We need to set the 0s in the
+        # inverse variance for the existing cosmic rays (CRAY) to the
+        # median. Notice that CRAY is the "fake" name for the existing
+        # cosmic rays mask plane. The plane with the newly detected
+        # one is called "CR" in the LSST frame work and that is the
+        # one we should use when handlying the cosmic rays detected
+        # with the LSST function.  *** Only need for images with
+        # existing CRAY plane ****
+        # **************************************************************
+
         CRAY     = self.msk.getPlaneBitMask("CRAY") # Gets the LSST value for DES cosmic rays
         CR       = self.msk.getPlaneBitMask("CR")   # Gets the LSST value for LSST cosmic rays
+
         cr_prev  = np.where(self.mska & CRAY)
         NCR_prev = len(cr_prev[0])
         if NCR_prev > 0:
@@ -472,31 +323,32 @@ class CosmicMasker(BaseMasker):
             median_rep            = np.median(self.vara)
             logging.info("Fixing weight map with median=%.1f for those %d CR-pixels"%(NCR_prev, median_rep))
             self.vara[cr_prev]    = median_rep # The LSST handle
-            self.image.OUT_WGT[cr_prev] = median_rep # The original array
+            self.image.weight[cr_prev] = median_rep # The original array
             logging.info("Fixing mask plane for those CR-pixels too ")
             # Remove the LSST CR bit from the mask array
             self.mska[cr_prev]    = self.mska[cr_prev] - CR 
             # Remove the DES CRAY bit from the image mask
-            self.image.OUT_MSK[cr_prev] = self.image.OUT_MSK[cr_prev] - MASKBITS.BADPIX_CRAY 
+            self.image.mask[cr_prev] = self.image.mask[cr_prev] - MASKBITS.BADPIX_CRAY 
+
         # ************************************************************
         # Make an LSST masked image (science, mask, and weight) 
         self.mi = afwImage.makeMaskedImage(self.sci, self.msk, self.var)
   
     def find_CRs(self,**kwargs):
+        """
+        Find the cosmic rays in the science image using
+        lsst.meas.algorithms.findCosmicRays
+        """
         # Load the the LSST modules here to avoid problems elsewhere in case they are not present
         import lsst.meas.algorithms as measAlg
         import lsst.ip.isr          as ip_isr
         import lsst.afw.math        as afwMath
         import lsst.pex.config      as pexConfig
          
-        """
-        Find the Cosmic Rays on a Science Image using lsst.meas.algorithms.findCosmicRays
-        """
-         
         # Estimate the PSF of the science image -- we do this by default
         if not self.fwhm:
             logging.info("Attempting to get FWHM from the image header")
-            self.fwhm  = self.image.get_FWHM()
+            self.fwhm  = self.get_FWHM(self.image)
 
         xsize = int(self.fwhm*9)
         sigma = self.fwhm/(2*np.sqrt(2*np.log(2)))
@@ -526,7 +378,9 @@ class CosmicMasker(BaseMasker):
         crConfig             = measAlg.FindCosmicRaysConfig()
         crConfig.minSigma    = self.minSigma
         crConfig.min_DN      = self.min_DN
-        crConfig.nCrPixelMax = int(self.image.nx*self.image.ny/3) # 1e6 will not work, needs an integer
+
+        nx,ny = self.image.data.shape
+        crConfig.nCrPixelMax = int(nx*ny/3) # 1e6 will not work, needs an integer
         if self.interpCR:
             crConfig.keepCRs  = False # Do interpolate
             logging.info("Will erase detected CRs -- interpolate CRs on SCI image")
@@ -538,7 +392,7 @@ class CosmicMasker(BaseMasker):
         tCR = time.time()
         logging.info("Starting CR finder")
         self.crs = measAlg.findCosmicRays(self.mi, psf, background, pexConfig.makePolicy(crConfig))
-        logging.info("Found CR in %s for: %s" % (elapsed_time(tCR,verb=False),self.image.filename))
+        logging.info("Found CR in %s for: %s" % (elapsed_time(tCR,verb=False),self.image.sourcefile))
 
         # Dilate interpolation working on the mi element
         if self.dilateCR and self.interpCR:
@@ -561,37 +415,33 @@ class CosmicMasker(BaseMasker):
         # The bad pixels that were interpolated before CR detection
         masked_bad_interp = self.masked_bad_interp
         NCR           = len(masked_cr[masked_cr==True])
-        logging.info("Detected:   %d CRs in %s"%(len(self.crs),self.image.filename))
+        logging.info("Detected:   %d CRs in %s"%(len(self.crs),self.image.sourcefile))
         logging.info("Containing: %d CR-pixels"%NCR)
          
         # 1. The Science 
         # Put back the CRs in case we don't want to interp
         # This is a WORK AROUND FOR crConfig.keepCRs option for now
         if not self.interpCR:
-            self.scia[masked_cr] = self.image.OUT_SCI[masked_cr] 
-        self.image.OUT_SCI = self.scia.copy() # This is the output now
-         
+            self.scia[masked_cr] = self.image.data[masked_cr] 
+        self.image.data = self.scia.copy() # This is the output now
+
         # 2. The Mask
-        self.image.OUT_MSK[masked_cr] = MASKBITS.BADPIX_CRAY | self.image.OUT_MSK[masked_cr]  
+        self.image.mask[masked_cr] |= MASKBITS.BADPIX_CRAY
         if self.interpCR:
-            self.image.OUT_MSK[masked_interp] = MASKBITS.BADPIX_INTERP | self.image.OUT_MSK[masked_interp]
+            self.image.mask[masked_interp] |= MASKBITS.BADPIX_INTERP
          
         # 3. The Weight
-        self.image.OUT_WGT[masked_cr]         = 0 # Set to zero weight CR-detected and interpolated pixels
-        self.image.OUT_WGT[masked_bad_interp] = 0 # Set to zero weight extra bad-pixels interpolated by immask
-        #self.image.OUT_WGT[masked_interp]   = 0 # PLEASE REVISE -- this was wrong !!!
+        self.image.weight[masked_cr]         = 0 # Set to zero weight CR-detected and interpolated pixels
+        self.image.weight[masked_bad_interp] = 0 # Set to zero weight extra bad-pixels interpolated by immask
+        #self.image.weight[masked_interp]   = 0 # PLEASE REVISE -- this was wrong !!!
   
     def update_header(self):
         """
         Add records to the header of the fits files
         """
-        rec1 = {'name':'DESNCRAY', 'value':len(self.crs),'comment':"Number of cosmic rays masked"}
-
-        # ADW: Should only update science header
-        #for h in self.image.headers:
-        #    h.add_record(rec1)
-        #    h.add_record(rec2)
-        self.image.h_sci.add_record(rec1)
+        rec = dict(name='DESNCRAY', value=len(self.crs),
+                   comment="Number of cosmic rays masked")
+        self.image.header.add_record(rec)
 
     
 class StreakMasker(BaseMasker):
@@ -671,13 +521,13 @@ class StreakMasker(BaseMasker):
             #self.BKG    = DESImage(self.bkgfile).BKG
          
             # Make a background subtracted image
-            self.subIm = self.image.OUT_SCI - self.BKG
+            self.subIm = self.image.data - self.BKG
         else:
             self.BKG   = None
-            self.subIm = self.image.OUT_SCI
+            self.subIm = self.image.data
 
         # Create a boolean selection mask from the requested bits
-        self.masked = ((self.image.OUT_MSK & self.maskbits ) > 0)
+        self.masked = ((self.image.mask & self.maskbits ) > 0)
          
         # Re-bin the image (if requested)
         if self.bin_factor > 1:
@@ -808,8 +658,8 @@ class StreakMasker(BaseMasker):
          
         # Create the mask from the streaks
         logging.info("Masking %i streaks"%(len(self.mask_objs)))
-        streak_mask = np.zeros(self.image.OUT_MSK.shape,dtype=self.image.OUT_MSK.dtype)
-        wcs = wcsutil.WCS(self.image.h_sci)
+        streak_mask = np.zeros(self.image.mask.shape,dtype=self.image.mask.dtype)
+        wcs = wcsutil.WCS(self.image.header)
         for i,obj in enumerate(self.mask_objs):
             slope  = obj['SLOPE']
             inter1 = obj['INTER1']
@@ -817,7 +667,7 @@ class StreakMasker(BaseMasker):
             # Print intercept in original image coordinates
             logging.info("  %i   NSIG=%g, SLOPE=%g, INTER1=%g, INTER2=%g"%(i,obj['MAX'],slope,inter1*self.bin_factor,inter2*self.bin_factor))
           
-            tmp_mask = np.zeros(self.searchIm.shape,dtype=self.image.OUT_MSK.dtype)
+            tmp_mask = np.zeros(self.searchIm.shape,dtype=self.image.mask.dtype)
             tmp_mask = self.mask_between(tmp_mask,slope,inter1,inter2,self.mask_factor)
           
             clip = np.abs(np.abs(np.degrees(np.arctan(slope)))-self.clip_angle) < self.clip_range
@@ -843,9 +693,9 @@ class StreakMasker(BaseMasker):
         ypix,xpix = np.nonzero(streak_mask)
          
         # set the streak bit
-        self.image.OUT_MSK[ypix,xpix] = self.image.OUT_MSK[ypix,xpix] | self.setbit 
+        self.image.mask[ypix,xpix] = self.image.mask[ypix,xpix] | self.setbit 
         # and zero out the weight
-        self.image.OUT_WGT[ypix,xpix] = 0
+        self.image.weight[ypix,xpix] = 0
         # and update the header
         self.update_header()
 
@@ -871,18 +721,19 @@ class StreakMasker(BaseMasker):
         fitsio.write(outname,self.mask_objs,clobber=True)
   
     def write_streak_mask(self):
-        basename = os.path.basename(self.image.outname)
+        basename = os.path.basename(self.image.sourcefile)
         outbase = basename.split('.fit')[0]+'_mask.fits'
-        outname = os.path.join(self.image.outdir,outbase)
+
+        outname = os.path.join(self.outdir,outbase)
 
         logging.info("Writing streak mask: %s" % (outname))
         
-        maskonly = np.zeros(self.image.OUT_MSK.shape,dtype=self.image.OUT_MSK.dtype)
-        test = np.where((self.image.OUT_MSK & self.setbit) > 0)
+        maskonly = np.zeros(self.image.mask.shape,dtype=self.image.mask.dtype)
+        test = np.where((self.image.mask & self.setbit) > 0)
         maskonly[test[0],test[1]] = self.setbit
    
         # Write mask as float32 so that "ds9 -mask" reads properly
-        header = copy.copy(self.image.h_msk)
+        header = copy.copy(self.image.mask_hdr)
         header['BZERO'] = 0 
         fitsio.write(outname,maskonly.astype('f4'),header=header,clobber=True)
   
@@ -893,7 +744,7 @@ class StreakMasker(BaseMasker):
         import pylab as plt
          
         # Get the drawbase name
-        basename      = os.path.basename(self.image.filename)
+        basename      = os.path.basename(self.image.sourcefile)
         outbase       = os.path.splitext(os.path.splitext(basename)[0])[0] # double split for '.fits.fz' files
         drawbase = os.path.join(self.outdir,outbase)
          
@@ -932,9 +783,9 @@ class StreakMasker(BaseMasker):
         for obj in self.mask_objs:
             y1 = obj['SLOPE']*x+obj['INTER1']; plt.plot(x,y1,'--w')
             y2 = obj['SLOPE']*x+obj['INTER2']; plt.plot(x,y2,'--w')
-        if (self.image.OUT_MSK & self.setbit).sum():
+        if (self.image.mask & self.setbit).sum():
             plt.sca(axes[2]) 
-            bin_mask = self.bin_pixels(self.image.OUT_MSK & self.setbit,self.bin_factor).astype(bool)
+            bin_mask = self.bin_pixels(self.image.mask & self.setbit,self.bin_factor).astype(bool)
             bin_mask = np.ma.array(bin_mask,mask=(bin_mask==0))
             cmap = matplotlib.cm.binary; cmap.set_bad('k',0)
             plt.imshow(bin_mask,origin='bottom',alpha=0.5,cmap=cmap)
@@ -980,8 +831,9 @@ class StreakMasker(BaseMasker):
         """
         Add records to the header of the fits files
         """
-        rec1 = {'name':'DESNSTRK', 'value':len(self.mask_objs),'comment':"Number of streaks masked"}
-        self.image.h_sci.add_record(rec1)
+        rec = dict(name='DESNSTRK', value=len(self.mask_objs),
+                   comment="Number of streaks masked")
+        self.image.header.add_record(rec)
 
 
     # This is the start of routines that are more or less
@@ -1715,7 +1567,7 @@ def run(args):
 
     commands = [args.command]
     kwargs = vars(args)
-    image = DESImage(**kwargs)
+    image = DESImage.load(args.filename)
     if 'all' in commands: commands = ['cosmics','streaks']
     for command in commands:
         logging.info('Running %s...'%command)
@@ -1723,14 +1575,20 @@ def run(args):
             cosmics = CosmicMasker(image, **kwargs)
         if command == 'streaks':
             streaks = StreakMasker(image, **kwargs)
-
         ## In the future...
         #if command == 'stars':
         #    stars = StarMasker(image, **kwargs)
         #if command == 'bleeds':
         #    bleeds = BleedMasker(image, **kwargs)
 
-    image.write()
+
+    # Update the header information
+    timenow   = time.asctime() # Time stamp for new fits files
+    rec = dict(name='DESIMMSK',value=timenow,comment="DESDM immask image")
+    image.header.add_record(rec)
+
+    image.save(args.outname)
+    logging.info("Wrote: %s" % args.outname)
         
 # Format time
 def elapsed_time(t1,verb=False):
