@@ -11,7 +11,6 @@ TODO:
  - Iterate through finding streaks (remove each streak before finding next)?
  - Avoid filled corner cases by checking the fraction of area above the streak 
    that is above sky threshold.
- - Use despyfits.DESImage rather than the local version
 
 @authors: Felipe Menanteau    <felipe@illinois.edu>
 @authors: Alex Drlica-Wagner  <kadrlica@fnal.gov>
@@ -244,17 +243,18 @@ class CosmicMasker(BaseMasker):
             BADPIX_BPM, BADPIX_INTERP, BADPIX_EDGE
         """
 
+        logging.info("Creating BAD/BPM pixel mask for interpolation")
+
         # Copy the image data to temporary arrays that will be altered
         self.SCI = copy.copy(self.image.data)
         self.MSK = copy.copy(self.image.mask)
         self.WGT = copy.copy(self.image.weight)
          
-        logging.info("Creating BAD/BPM pixel mask for interpolation")
-        # Mask for BAD=1 pixels that have been already interpolated
+        # Mask for BAD pixels that have been already interpolated
         # (INTERP=4), and keep the original values for later.  It is
         # important to note that we modify only the MSK ndarray, which
-        # is the one used by the LSST framework. The original,
-        # unmodified values are keept in the copy for output OUT_MSK.
+        # is the one used by the LSST framework. The original
+        # unmodified values are kept in the DESImage.
         masked_bad        = (self.MSK & MASKBITS.BADPIX_BPM) > 0
         masked_bad_interp = ((self.MSK & MASKBITS.BADPIX_INTERP) > 0) & masked_bad
          
@@ -262,12 +262,12 @@ class CosmicMasker(BaseMasker):
         # keep the original values for later, as they are kept in the OUT_MSK copy.
         masked_edge = (self.MSK & MASKBITS.BADPIX_EDGE) > 0
          
-        # Temporaly change values of 513 to 512 in order to avoid
-        # interpolating over glowing edges of ccds also labeled as BAD (512+1=513)
+        # Temporaly change values of BAD & EDGE to BAD to avoid
+        # interpolating over glowing edges of ccds also labeled as BAD
         self.MSK[masked_edge] = MASKBITS.BADPIX_EDGE
          
-        # Temporaryly change the values of BAD and INTERP pixels from 5
-        # to 4 for the MSK ndarray as we do not want to interpolate twice.
+        # Temporaryly change the values of BAD & INTERP pixels to
+        # INTERP for the MSK ndarray as we do not want to interpolate twice.
         self.MSK[masked_bad_interp] = MASKBITS.BADPIX_INTERP
   
         self.masked_bad_interp = masked_bad_interp
@@ -313,8 +313,8 @@ class CosmicMasker(BaseMasker):
         # existing CRAY plane ****
         # **************************************************************
 
-        CRAY     = self.msk.getPlaneBitMask("CRAY") # Gets the LSST value for DES cosmic rays
-        CR       = self.msk.getPlaneBitMask("CR")   # Gets the LSST value for LSST cosmic rays
+        CRAY     = self.msk.getPlaneBitMask("CRAY") # LSST value for DES cosmic rays
+        CR       = self.msk.getPlaneBitMask("CR")   # LSST value for LSST cosmic rays
 
         cr_prev  = np.where(self.mska & CRAY)
         NCR_prev = len(cr_prev[0])
@@ -491,7 +491,7 @@ class StreakMasker(BaseMasker):
                                help="New streak mask bit value")],
         ['maxmask'      , dict(default=1000,type=int,
                                help="Maximum number of streaks to mask [NOT IMPLEMENTED]")],
-        # Streak objects
+        # Streak objects (probably don't need both)
         ['write_streaks', dict(action="store_true",
                                help="Write out streak objects")],
         ['streaksfile', dict(default=False,
@@ -1520,16 +1520,16 @@ def cmdline():
     formatter = argparse.ArgumentDefaultsHelpFormatter
     general = argparse.ArgumentParser(formatter_class=formatter,add_help=False)
     general.add_argument("filename", help="FITS/FZ file to process.")
-    general.add_argument("outname", help="Name of output FITS/FZ file.")
+    general.add_argument("outname", help="Name of output FITS file.")
     general.add_argument('-v','--verbose', action="count", help="Output verbosity")
-    general.add_argument('--compress', action="store_true", help="RICE/fpack compress output")
+    #general.add_argument('--compress', action="store_true", help="RICE/fpack compress output")
     general.add_argument('--outdir',default="immask_out", help="Path to QA output files")
     subparsers=parser.add_subparsers(dest='command',title='Available subcommands')
 
     # Cosmic-ray masking subcommmand
     title = 'cosmics'
     description = "Mask cosmic rays using the LSST python framework."
-    cosmics = CosmicMasker.argparser(title,add_help=False)
+f    cosmics = CosmicMasker.argparser(title,add_help=False)
     subparser = subparsers.add_parser(title,description=description,
                                       parents=[general,cosmics],
                                       formatter_class=formatter,
@@ -1590,14 +1590,22 @@ def run(args):
     image.save(args.outname)
     logging.info("Wrote: %s" % args.outname)
         
-# Format time
 def elapsed_time(t1,verb=False):
+    """ Format time output """
     import time
     t2    = time.time()
     stime = "%dm %2.2fs" % ( int( (t2-t1)/60.), (t2-t1) - 60*int((t2-t1)/60.))
     if verb:
         print >>sys.stderr,"Elapsed time: %s" % stime
     return stime
+
+def extract_filename(filename):
+    """ Safe extraction of filename """
+    if filename[0] == "!": filename=filename[1:]
+    filename = os.path.expandvars(filename)
+    filename = os.path.expanduser(filename)
+    return filename
+
      
 if __name__ == "__main__":
 
