@@ -1529,7 +1529,7 @@ def cmdline():
     # Cosmic-ray masking subcommmand
     title = 'cosmics'
     description = "Mask cosmic rays using the LSST python framework."
-f    cosmics = CosmicMasker.argparser(title,add_help=False)
+    cosmics = CosmicMasker.argparser(title,add_help=False)
     subparser = subparsers.add_parser(title,description=description,
                                       parents=[general,cosmics],
                                       formatter_class=formatter,
