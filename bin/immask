@@ -18,9 +18,13 @@ import time
 import immask
 import logging
 
+if "--version" in sys.argv:
+    print "immask %-12s %s"%("Version:",immask.__version__)
+    print "immask %-12s %s"%("Revision:",immask.__revision__)
+    exit()
+
 # Get the start time
 t0 = time.time()
-
 parser = immask.cmdline()
 args = parser.parse_args()
 args.func(args)
