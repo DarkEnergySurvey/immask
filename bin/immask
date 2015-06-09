@@ -19,8 +19,10 @@ import immask
 import logging
 
 if "--version" in sys.argv:
-    print "immask %-12s %s"%("Version:",immask.__version__)
-    print "immask %-12s %s"%("Revision:",immask.__revision__)
+
+    print "Version: %s ; Revision: %s " % (immask.__version__,immask.__revision__)
+    #print "immask %-12s %s"%("Version:",immask.__version__)
+    #print "immask %-12s %s"%("Revision:",)
     exit()
 
 # Get the start time
