@@ -454,6 +454,8 @@ class StreakMasker(BaseMasker):
                               help="Input background FITS file (fz/fits)")],
         ['draw'        , dict(action='store_true',
                               help="Use matplotlib to draw diagnostic plots.")],
+        ['draw_basename', dict(default=False,
+                               help="File basename diagnostic plots.")],
         ['template_dir', dict(default="/dev/null",
                               help="Directory containing Hough template.")],
         # Image pre-processing
@@ -704,11 +706,11 @@ class StreakMasker(BaseMasker):
         # Draw Plots
         if self.draw:
             self.draw_plots()
-        
+
         # Write streak objects
         if self.write_streaks:
             self.write_streak_objects() 
-
+        
     def write_streak_objects(self):
         if self.streaksfile:
             outname = self.streaksfile
@@ -743,9 +745,12 @@ class StreakMasker(BaseMasker):
         """
         import pylab as plt
          
-        # Get the drawbase name
-        basename      = os.path.basename(self.image.sourcefile)
-        outbase       = os.path.splitext(os.path.splitext(basename)[0])[0] # double split for '.fits.fz' files
+        # Get the drawbase name -- from the output name so it is unique
+        if self.draw_basename:
+            basename = self.draw_basename
+        else:
+            basename = os.path.basename(self.image.outname)
+        outbase  = os.path.splitext(os.path.splitext(basename)[0])[0] # double split for '.fits.fz' files
         drawbase = os.path.join(self.outdir,outbase)
          
         # The sky noise
@@ -1523,7 +1528,8 @@ def cmdline():
     general.add_argument("outname", help="Name of output FITS file.")
     general.add_argument('-v','--verbose', action="count", help="Output verbosity")
     #general.add_argument('--compress', action="store_true", help="RICE/fpack compress output")
-    general.add_argument('--outdir',default="immask_out", help="Path to QA output files")
+    general.add_argument('--outdir',default="qa", help="Path to QA output files")
+
     subparsers=parser.add_subparsers(dest='command',title='Available subcommands')
 
     # Cosmic-ray masking subcommmand
@@ -1568,6 +1574,8 @@ def run(args):
     commands = [args.command]
     kwargs = vars(args)
     image = DESImage.load(args.filename)
+    # passing outname into the class
+    image.outname = args.outname 
     if 'all' in commands: commands = ['cosmics','streaks']
     for command in commands:
         logging.info('Running %s...'%command)
