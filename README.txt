@@ -39,17 +39,10 @@ unsetenv EUPS_PATH
 
 # For DIST section
 source /work/apps/RHEL6/dist/eups/desdm_eups_setup.csh
-setup -v immask 0.3.4+0
+setup -v immask version
 
 # For DEV section
 source /work/apps/RHEL6/dev/eups/desdm_eups_setup.csh
-setup -v immask 0.3.4+0
+setup -v immask version
 
 
-To Do:
----------------
-- Load bad pixel bit mask directly from imsupport
-- More extensive method documentation.
-- Add decorator for masker class containing defaults.
-- Re-factor 'immasklib' into 'image' and 'masker' files.
-- Clean up conflict between '--compress' and '.fz' file endings.
