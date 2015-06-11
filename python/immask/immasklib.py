@@ -285,10 +285,11 @@ class CosmicMasker(BaseMasker):
         logging.info("Making LSST image structure from SCI, MSK and VAR")
         # 0 Set up the Mask Plane dictionay for DECam
         self.set_DECamMaskPlaneDict()
-        # 1 - Science
+        # 1 - Create the science image
         self.sci = afwImage.ImageF(self.SCI)
-        # 2- The Mask plane Image and rewrite mask planes into LSST convention
-        self.msk = afwImage.MaskU(self.MSK)
+        # 2 - Create the mask plane (must be unsigned)
+        self.msk = afwImage.MaskU(int2uint(self.MSK))
+        #self.msk = afwImage.MaskU(self.MSK)
         self.msk.conformMaskPlanes(self.DECamMaskPlaneDict) 
          
         # 3 - The variance Image (could be done in DESImage)
@@ -737,7 +738,8 @@ class StreakMasker(BaseMasker):
         # Write mask as float32 so that "ds9 -mask" reads properly
         header = copy.copy(self.image.mask_hdr)
         header['BZERO'] = 0 
-        fitsio.write(outname,maskonly.astype('f4'),header=header,clobber=True)
+        #fitsio.write(outname,maskonly.astype('f4'),header=header,clobber=True)
+        fitsio.write(outname,uint2int(maskonly),header=header,clobber=True)
   
     def draw_plots(self):
         """
@@ -1614,7 +1616,16 @@ def extract_filename(filename):
     filename = os.path.expanduser(filename)
     return filename
 
-     
+def int2uint(array):
+    """ Utility function to convert from signed to unsigned integer.
+    This function uses the fact that the unique character codes for
+    unsigned integers are upper case of their signed equivalents.
+    http://docs.scipy.org/doc/numpy/reference/arrays.dtypes.html
+    """
+    # Could add a few sanity checks here...
+    char = array.dtype.char
+    return array.view(char.upper())
+    
 if __name__ == "__main__":
 
     # Get the start time
