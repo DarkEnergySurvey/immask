@@ -539,21 +539,27 @@ class StreakMasker(BaseMasker):
             self.subIm  = self.bin_pixels(self.subIm,self.bin_factor)
             self.masked = np.ceil(self.bin_pixels(self.masked,self.bin_factor)).astype(bool)
 
-        import pylab as plt
-        fig, axes = plt.subplots(1, 2)
-        axes[0].imshow(self.subIm)
-        axes[1].imshow(self.masked)
+        #import pylab as plt
+        #fig, axes = plt.subplots(1, 2)
+        #axes[0].imshow(self.subIm)
+        #axes[1].imshow(self.masked)
            
         # Calculate sky noise
         logging.info("Measuring sky noise...")
         usepix = np.where(~self.masked)
         self.sky_bkg, self.sky_err, self.sky_skew = self.mmm(self.subIm[usepix])
-         
+
+        # Added to deal with offsets in pca sky subtracted images
+        # Might be good for SExtractor background as well...
+        # if self.bkgfile is None:
+        logging.info("Adjusting sky zero-level: %.2f"%self.sky_bkg)
+        self.subIm -= self.sky_bkg
+        
         # allow objects to be connected diagonally, create the structure
         self.structure = ndimage.generate_binary_structure(2,2)
          
         # The thresholded image to pass to the Hough transform
-        self.searchIm = ( (self.subIm > self.nsig_sky*self.sky_err) & ~self.masked )
+        self.searchIm = ((self.subIm > self.nsig_sky*self.sky_err) & ~self.masked)
          
         # Should do a maxarea cut here...
         logging.info("Performing Hough transform now...")
@@ -1259,7 +1265,7 @@ class StreakMasker(BaseMasker):
     def mmm(sky_vector, mxiter=50, atol=1e-10):
      
         """
-        Robust sky fitting from IDL astronomy library.
+        Robust sky fitting from DAOPHOT via IDL astronomy library.
         Used to estimate sky noise.
      
         Parameters:
@@ -1267,7 +1273,10 @@ class StreakMasker(BaseMasker):
         mxiter     : maximum iterations of the fitter
         atol       : absolute tolerance on value of skymod
         Returns:
-        sky_fit    : tuple of (skymod, sigma, skew)
+        sky_fit    : tuple of 
+                     skymod: Estimated mode of sky
+                     sigma:  Standard deviation of the peak in thesky
+                     skew:   Skewness of the peak
         """
      
         minsky = 20
