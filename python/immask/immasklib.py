@@ -455,7 +455,7 @@ class StreakMasker(BaseMasker):
         ['bkgfile'     , dict(default=None,
                               help="Input background FITS file (fz/fits)")],
         ['draw'        , dict(action='store_true',
-                              help="Use matplotlib to draw diagnostic plots.")],
+                              help="Draw diagnostic plots.")],
         ['draw_basename', dict(default=False,
                                help="File basename diagnostic plots.")],
         ['template_dir', dict(default="/dev/null",
@@ -474,12 +474,14 @@ class StreakMasker(BaseMasker):
                                help="Threshold for Hough peak characterization")],
         # Quality cuts
         ['max_width'    , dict(default=150.,type=float,
-                               help="Maximum width in (pix)")],
+                               help="Maximum streak width in (pix)")],
         ['max_angle'    , dict(default=15., type=float,
-                               help="Maximum angular extent (deg)")],
-        # For clipping the ends of streak
+                               help="Maximum streak angular extent (deg)")],
+        ['min_fill',      dict(default=0.25, type=float,
+                               help="Minimum fraction of streak above threshold")],
+        # For clipping partial streaks and diffraction spikes
         ['clip'         , dict(action="store_true",
-                               help="Clip underpopulated ends of the streak.")],
+                               help="Clip diffraction spikes (DEPRECATED).")],
         ['nsig_clip'    , dict(default=2.,  type=float,
                                help="Clip chunks that are more than 'nsig' underdense.")],
         ['clip_angle'   , dict(default=45., type=float,
@@ -628,6 +630,16 @@ class StreakMasker(BaseMasker):
         merge_objs = self.streak_statistics(self.trans, self.rho, self.theta, unique, rev)
         merge_objs['BINNING'][:] = self.bin_factor
          
+        for i,obj in enumerate(merge_objs):
+            slope  = obj['SLOPE']
+            inter1 = obj['INTER1']
+            inter2 = obj['INTER2']
+            # Don't widen the mask for fill_frac cut
+            tmp_mask=np.zeros(self.searchIm.shape,dtype=self.image.mask.dtype)
+            tmp_mask=self.mask_between(tmp_mask,slope,inter1,inter2)
+            fill_frac = self.fill_fraction(self.searchIm,self.masked,tmp_mask)
+            obj['FILL_FRAC'] = fill_frac
+
         logging.info("Performing quality cuts...")
         # More quality cuts
         cut = np.zeros(len(merge_objs),dtype=merge_objs['CUT'].dtype)
@@ -635,12 +647,18 @@ class StreakMasker(BaseMasker):
         width_cut = (merge_objs['WIDTH'] > self.max_width/float(self.bin_factor))
         logging.info("\tCutting %i objects with: WIDTH > %s"%(width_cut.sum(),self.max_width))
         cut |= width_cut
+
         # Objects that span too large an opening angle -- too curvy
         delta_theta = np.abs(self.theta[merge_objs['XMAX']] - self.theta[merge_objs['XMIN']])
         theta_cut = delta_theta > np.radians(self.max_angle)
         logging.info("\tCutting %i objects with: THETA > %s"%(theta_cut.sum(),self.max_angle))
         cut |= theta_cut
-         
+
+        # Objects that do not fill the mask
+        fill_cut = merge_objs['FILL_FRAC'] < self.min_fill
+        logging.info("\tCutting %i objects with: FILL_FRAC < %s"%(fill_cut.sum(),self.min_fill))
+        cut |= fill_cut
+
         merge_objs['CUT'][np.nonzero(cut)] = 1
         logging.info("Found %i streaks passing quality cuts"%((merge_objs['CUT']==0).sum()))
 
@@ -680,10 +698,14 @@ class StreakMasker(BaseMasker):
             tmp_mask = np.zeros(self.searchIm.shape,dtype=self.image.mask.dtype)
             tmp_mask = self.mask_between(tmp_mask,slope,inter1,inter2,self.mask_factor)
           
+            # ADW 2015/08/20: This was never really tested and should be deprecated
             clip = np.abs(np.abs(np.degrees(np.arctan(slope)))-self.clip_angle) < self.clip_range
             if self.clip and clip:
-                logging.info("Examining streak for clipping...")
+                logging.info("Examining for diffraction spike clipping...")
                 tmp_mask = self.clip_mask(self.searchIm,self.masked,tmp_mask,slope,self.nsig_clip)
+                
+            fill_fraction = self.fill_fraction(self.searchIm,self.masked,tmp_mask)
+            obj['FILL_FRAC'] = fill_fraction
           
             # Move to original resolution
             tmp_mask = tmp_mask.repeat(self.bin_factor,axis=0).repeat(self.bin_factor,axis=1)
@@ -753,7 +775,8 @@ class StreakMasker(BaseMasker):
         Draw the streak finder dignostic plot with matplotlib
         """
         import pylab as plt
-         
+        dpi = None # Can shrink disck i/o
+
         # Get the drawbase name -- from the output name so it is unique
         if self.draw_basename:
             basename = self.draw_basename
@@ -765,31 +788,31 @@ class StreakMasker(BaseMasker):
         # The sky noise
         pngfile = "%s_sky.png" % drawbase
         logging.info("Drawing sky noise: %s " % pngfile)
-        fig, axes = plt.subplots(1, 3)
+        fig, axes = plt.subplots(1, 3, dpi=dpi)
         sigma     = [1,2,3]
         for ax,sig in zip(axes,sigma):
             label = ndimage.label(((self.subIm>sig*self.sky_err) & ~self.masked),structure=self.structure)
             ax.imshow(label[0]>0,origin='bottom'); 
             ax.set_title(r"Sky Noise ($%s\sigma$)"%sig); 
-        plt.savefig(pngfile)
+        plt.savefig(pngfile,dpi=dpi)
          
         # Draw the input mask
         pngfile = "%s_bits.png" % drawbase
         logging.info("Drawing input mask: %s " % pngfile)
-        fig, axes = plt.subplots(1, 3)
+        fig, axes = plt.subplots(1, 3, dpi=dpi)
         axes[0].imshow(self.subIm > self.nsig_sky*self.sky_err,origin='bottom')
         axes[0].set_title("Threshold Image")
         axes[1].imshow(self.masked,origin='bottom')
         axes[1].set_title("Input Mask")
         axes[2].imshow(self.searchIm,origin='bottom')
         axes[2].set_title(r"Search Image")
-        plt.savefig(pngfile)
+        plt.savefig(pngfile,dpi=dpi)
          
         # Draw the lines and masks
         pngfile = "%s_mask.png" % drawbase
         logging.info("Drawing streaks and masks: %s" % pngfile)
         ymax,xmax = self.searchIm.shape; x = np.arange(xmax)
-        fig, axes = plt.subplots(1, 3)
+        fig, axes = plt.subplots(1, 3, dpi=dpi)
         titles = ["Sky Noise","Streaks","Mask"]
         for ax,t in zip(axes,titles):
             ax.imshow(self.searchIm,origin='bottom'); ax.set_title(t)
@@ -804,12 +827,12 @@ class StreakMasker(BaseMasker):
             cmap = matplotlib.cm.binary; cmap.set_bad('k',0)
             plt.imshow(bin_mask,origin='bottom',alpha=0.5,cmap=cmap)
         for ax in axes: ax.set_xlim(0,xmax); ax.set_ylim(0,ymax)
-        plt.savefig(pngfile)
+        plt.savefig(pngfile,dpi=dpi)
          
         #  Draw Hough transform at various thresholds
         pngfile = "%s_hough.png" % drawbase
         logging.info("Drawing Hough transform: %s" % pngfile)
-        fig, axes = plt.subplots(2,2,figsize=(12,6),sharey='all',sharex='all')
+        fig, axes = plt.subplots(2,2,figsize=(12,6),sharey='all',sharex='all',dpi=dpi)
         axes = axes.flatten()
         extent = [self.theta.min(),self.theta.max(),self.rho.min(),self.rho.max()]
         titles = ["Hough","Normalized",
@@ -825,7 +848,7 @@ class StreakMasker(BaseMasker):
         axes[2].set_ylabel(r'Distance (pix)'); 
         axes[2].set_xlabel(r'Angle (rad)')
         axes[3].set_xlabel(r'Angle (rad)')
-        plt.savefig(pngfile)
+        plt.savefig(pngfile,dpi=dpi)
 
     def get_template(self):
         """
@@ -892,14 +915,15 @@ class StreakMasker(BaseMasker):
                                   ('INTER2','f4'),
                                   ('WIDTH','f4'),
                                   ('BINNING','i4'),
+                                  ('FILL_FRAC','f4'),
                                   ('CORNERS','f4',(4,2)),
                                   ('CORNERS_WCS','f8',(4,2)),
                                   ('CUT','i2'),])
-        objs['CUT'][:] = 0
-        objs['BINNING'][:] = 0
-        objs['CORNERS'][:] = 0
-        objs['CORNERS_WCS'][:] = 0
-     
+
+        ZEROS = ['CUT','BINNING','CORNERS','CORNERS_WCS','FILL_FRAC']
+        for col in ZEROS:
+            objs[col][:] = 0
+        
         shape = array.shape
         ncol = shape[1]
 
@@ -967,6 +991,7 @@ class StreakMasker(BaseMasker):
      
             objs[i]['WIDTH']  = np.abs(rho1 - rho2)
             logging.debug("WIDTH\t= %.3g"%objs[i]['WIDTH'] )
+            
         return objs
 
     @staticmethod
@@ -1119,6 +1144,16 @@ class StreakMasker(BaseMasker):
         return out_mask
 
     @staticmethod
+    def fill_fraction(image,masked,mask):
+        im = np.ma.array(image,mask=masked)
+        ypix,xpix = np.nonzero(mask)
+     
+        # Number of counts per pixel in the streak region.
+        # Should always be <= 1
+        ncounts = im[ypix,xpix].sum()
+        npix = im[ypix,xpix].count()
+        return float(ncounts)/npix
+
     def clip_mask(image,masked,mask,slope,nsig_clip=4):
         """
         Divide the mask into chunks. Loop through these
@@ -1140,12 +1175,13 @@ class StreakMasker(BaseMasker):
         im = np.ma.array(image,mask=masked)
         ypix,xpix = np.nonzero(mask)
      
-        # Expected number of counts per pixel in the streak reagion.
-        # Should always be <= 1
-        ncounts = im[ypix,xpix].sum()
-        npix = im[ypix,xpix].count()
-        density = float(ncounts)/npix
-     
+        ## Expected number of counts per pixel in the streak reagion.
+        ## Should always be <= 1
+        #ncounts = im[ypix,xpix].sum()
+        #npix = im[ypix,xpix].count()
+        #density = float(ncounts)/npix
+        density = fill_fraction(image,masked,mask)
+        
         # Rotate the streak to horizontal (hence the minus sign)
         alpha = -np.arctan(slope)
         xpixp = np.cos(alpha) * xpix - np.sin(alpha) * ypix
@@ -1656,4 +1692,4 @@ if __name__ == "__main__":
     args.func(args)
 
     #print >>sys.stderr,"# Time:%s" % elapsed_time(t0)
-    logging.info("Time:%s" % elapsed_time(t0))
+    logging.info("Time: %s" % elapsed_time(t0))
