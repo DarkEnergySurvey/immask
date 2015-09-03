@@ -534,6 +534,14 @@ class StreakMasker(BaseMasker):
 
         # Create a boolean selection mask from the requested bits
         self.masked = ((self.image.mask & self.maskbits ) > 0)
+
+        # Dilate bright star mask
+        if (self.maskbits & MASKBITS.BADPIX_STAR) > 0:
+            niter = 25
+            struct = np.ones((3,3),dtype=bool)
+            # Pixels with *only* star bit set
+            starmask = (self.image.mask == MASKBITS.BADPIX_STAR)
+            self.masked |= ndimage.binary_dilation(starmask,struct,iterations=niter)
          
         # Re-bin the image (if requested)
         if self.bin_factor > 1:
@@ -541,11 +549,6 @@ class StreakMasker(BaseMasker):
             self.subIm  = self.bin_pixels(self.subIm,self.bin_factor)
             self.masked = np.ceil(self.bin_pixels(self.masked,self.bin_factor)).astype(bool)
 
-        #import pylab as plt
-        #fig, axes = plt.subplots(1, 2)
-        #axes[0].imshow(self.subIm)
-        #axes[1].imshow(self.masked)
-           
         # Calculate sky noise
         logging.info("Measuring sky noise...")
         usepix = np.where(~self.masked)
@@ -566,7 +569,7 @@ class StreakMasker(BaseMasker):
         # Should do a maxarea cut here...
         logging.info("Performing Hough transform now...")
         self.hough, self.theta, self.rho = Hough(self.searchIm).transform()
-         
+
         # Read in the Hough template or create one
         self.get_template()
          
@@ -634,6 +637,7 @@ class StreakMasker(BaseMasker):
             slope  = obj['SLOPE']
             inter1 = obj['INTER1']
             inter2 = obj['INTER2']
+
             # Don't widen the mask for fill_frac cut
             tmp_mask=np.zeros(self.searchIm.shape,dtype=self.image.mask.dtype)
             tmp_mask=self.mask_between(tmp_mask,slope,inter1,inter2)
@@ -834,15 +838,22 @@ class StreakMasker(BaseMasker):
         logging.info("Drawing Hough transform: %s" % pngfile)
         fig, axes = plt.subplots(2,2,figsize=(12,6),sharey='all',sharex='all',dpi=dpi)
         axes = axes.flatten()
-        extent = [self.theta.min(),self.theta.max(),self.rho.min(),self.rho.max()]
+
         titles = ["Hough","Normalized",
-                  r'Detect $(%g \sigma)$'% self.nsig_detect,
-                  r"Mask $(%g \sigma)$"  % self.nsig_mask]
+                  r'Detect $(%g \sigma)$'%self.nsig_detect,
+                  r"Mask $(%g \sigma)$"  %self.nsig_mask
+              ]
         data   = [self.hough,self.trans,self.detect_label,self.mask_label]
         cmap = matplotlib.cm.jet; cmap.set_bad('w',0)
-        for ax,d,t in zip(axes,data,titles):
-            #d = np.ma.masked_array(d,mask=~(d>0))
-            ax.imshow(d,extent=extent,aspect='auto',cmap=cmap,vmin=0)
+        extent = [self.theta.min(),self.theta.max(),self.rho.min(),self.rho.max()]
+        kwargs = dict(extent=extent,aspect='auto',cmap=cmap,vmin=0)
+        kw = [dict(kwargs),
+              dict(kwargs,vmax=35),
+              dict(kwargs),
+              dict(kwargs),
+              ]
+        for ax,d,t,k in zip(axes,data,titles,kw):
+            ax.imshow(np.ma.masked_array(d,mask=d==0),**k)
             ax.set_title(t)
         axes[0].set_ylabel(r'Distance (pix)'); 
         axes[2].set_ylabel(r'Distance (pix)'); 
@@ -860,9 +871,26 @@ class StreakMasker(BaseMasker):
             logging.info("Reading template from %s" % filename)
             self.template = read_template(filename)[0]
         else:
-            logging.info("No template Found --> calculating Hough normalization...")
+            logging.info("No template found --> calculating Hough normalization...")
             template_image = (np.ones(self.searchIm.shape,dtype=bool) & ~self.masked)
             self.template = Hough(template_image).transform()[0]
+
+            # Increase template values for corner pixels
+            corrections = odict([
+                ('edge',    [self.mask_edges,256/self.bin_factor,1.0]),
+                ('corner',  [self.mask_corners,256/self.bin_factor,5.0]),
+                ('triangle',[self.mask_triangle_corners,320/self.bin_factor,8.0]),
+                ])
+
+            #import pylab as plt
+            for n in ['corner']:
+                fn,npix,weight = corrections[n]
+                mask = fn(template_image.astype(bool),npix)
+                temp = Hough(template_image*mask).transform()[0]
+                #plt.figure();plt.imshow(self.template+weight*temp);plt.colorbar();plt.savefig('tmp_%s_temp.png'%n)
+
+            self.template += weight * temp
+            
 
     def update_header(self):
         """
@@ -910,6 +938,8 @@ class StreakMasker(BaseMasker):
                                   ('CEN_Y0','f4'),
                                   ('CEN_Y1','f4'),
                                   ('CEN_Y2','f4'),
+                                  ('DELTA_THETA','f4'),
+                                  ('DELTA_RHO','f4'),
                                   ('SLOPE','f4'),
                                   ('INTER1','f4'),
                                   ('INTER2','f4'),
@@ -958,9 +988,14 @@ class StreakMasker(BaseMasker):
             objs[i]['XMIN'] = xpix.min()
             objs[i]['XMAX'] = xpix.max()
             logging.debug("XMIN, XMAX\t= %i, %i"%(objs[i]['XMIN'],objs[i]['XMAX']))
+            objs[i]['DELTA_THETA'] = np.degrees(theta[objs[i]['XMAX']]-theta[objs[i]['XMIN']])
+            logging.debug("DELTA_THETA\t= %.0f"%(objs[i]['DELTA_THETA']))
+
             objs[i]['YMIN'] = ypix.min()
             objs[i]['YMAX'] = ypix.max()
             logging.debug("YMIN, YMAX\t= %i, %i"%(objs[i]['YMIN'],objs[i]['YMAX']))
+            objs[i]['DELTA_RHO'] = rho[objs[i]['YMAX']]-theta[objs[i]['YMIN']]
+            logging.debug("DELTA_RHO\t= %.0f"%(objs[i]['DELTA_RHO']))
      
             # Find pixel closest to centroid (careful of x-y confusion)
             centroid = ndimage.center_of_mass(island)
@@ -1111,6 +1146,7 @@ class StreakMasker(BaseMasker):
         out_mask[ypix,xpix] = True
         return out_mask
 
+
     @staticmethod
     def mask_between(mask,slope,inter1,inter2,factor=1.0):
         """
@@ -1144,6 +1180,29 @@ class StreakMasker(BaseMasker):
         return out_mask
 
     @staticmethod
+    def mask_edges(mask, npix=32):
+        out_mask = np.zeros(mask.shape,dtype=mask.dtype)
+        out_mask[npix:-npix,npix:-npix] = True
+        return out_mask
+
+    @staticmethod
+    def mask_corners(mask, npix=32):
+        out_mask = np.ones(mask.shape,dtype=mask.dtype)
+        out_mask[npix:-npix,:] = False
+        out_mask[:,npix:-npix] = False
+        return out_mask
+
+    @staticmethod
+    def mask_triangle_corners(mask, npix=32):
+        out_mask = np.zeros(mask.shape,dtype=mask.dtype)
+        n,m = mask.shape
+        idx = np.triu_indices(n,m-npix,m)
+        yy,xx = idx
+        for i,j in [(1,1),(-1,1),(1,-1),(-1,-1)]:
+            out_mask[i*yy,j*xx] = True
+        return out_mask
+
+    @staticmethod
     def fill_fraction(image,masked,mask):
         im = np.ma.array(image,mask=masked)
         ypix,xpix = np.nonzero(mask)
@@ -1154,6 +1213,16 @@ class StreakMasker(BaseMasker):
         npix = im[ypix,xpix].count()
         return float(ncounts)/npix
 
+    @staticmethod
+    def length(mask,slope):
+        ypix,xpix = np.nonzero(mask)
+     
+        # Rotate the streak to horizontal (hence the minus sign)
+        alpha = -np.arctan(slope)
+        xpixp = np.cos(alpha) * xpix - np.sin(alpha) * ypix
+        xmin,xmax = xpixp.min(), xpixp.max()
+        length = xmax - xmin
+        
     def clip_mask(image,masked,mask,slope,nsig_clip=4):
         """
         Divide the mask into chunks. Loop through these
@@ -1177,9 +1246,6 @@ class StreakMasker(BaseMasker):
      
         ## Expected number of counts per pixel in the streak reagion.
         ## Should always be <= 1
-        #ncounts = im[ypix,xpix].sum()
-        #npix = im[ypix,xpix].count()
-        #density = float(ncounts)/npix
         density = fill_fraction(image,masked,mask)
         
         # Rotate the streak to horizontal (hence the minus sign)
@@ -1552,6 +1618,8 @@ class StreakMasker(BaseMasker):
     @staticmethod
     def median_filter(data,factor=4):
         return percentile_filter(data,factor,q=50)
+
+
      
 ###########################
 ### Command-line Parser ###
@@ -1653,8 +1721,11 @@ def run(args):
     rec = dict(name='DESIMMSK',value=timenow,comment="DESDM immask image")
     image.header.add_record(rec)
 
-    image.save(args.outname)
-    logging.info("Wrote: %s" % args.outname)
+    if False:
+        image.save(args.outname)
+        logging.info("Wrote: %s" % args.outname)
+    else:
+        logging.warning("NO FILE SAVED!")
         
 def elapsed_time(t1,verb=False):
     """ Format time output """
