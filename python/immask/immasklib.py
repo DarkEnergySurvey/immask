@@ -1721,7 +1721,8 @@ def run(args):
     rec = dict(name='DESIMMSK',value=timenow,comment="DESDM immask image")
     image.header.add_record(rec)
 
-    if False:
+    # Flag for turning off writing
+    if True:
         image.save(args.outname)
         logging.info("Wrote: %s" % args.outname)
     else:
