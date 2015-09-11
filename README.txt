@@ -1,5 +1,5 @@
 DESDM image masking module
----------------
+--------------------------
 
 Mask satellite streaks and cosmic rays 
 
@@ -31,18 +31,5 @@ To see options:
 
  %> bin/immask <subcommand> --help
 
-
-To run on NCSA cosmology cluster via eups:
-
-unsetenv EUPS_DIR
-unsetenv EUPS_PATH
-
-# For DIST section
-source /work/apps/RHEL6/dist/eups/desdm_eups_setup.csh
-setup -v immask version
-
-# For DEV section
-source /work/apps/RHEL6/dev/eups/desdm_eups_setup.csh
-setup -v immask version
 
 
