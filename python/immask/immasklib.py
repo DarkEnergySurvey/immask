@@ -132,14 +132,14 @@ class CosmicMasker(BaseMasker):
 
     ### Command line arguments for cosmic-ray masking
     defaults = odict([
-        ['interpCR'  , dict(default=True, action="store_true", 
+        ['interpCR'  , dict(default=False, action="store_true", 
                             help="Interpolate CR in science image.")],
-        ['noInterpCR', dict(action="store_true", 
-                            help="Do not Interpolate CR in Science image.")],
         ['dilateCR'  , dict(action="store_true", 
                             help="Dilate CR mask by 1 pixel.")],
         ['nGrowCR'   , dict(default=1, type=int, 
                             help="Dilate CR mask by nGrowCR pixels.")],
+        ['updateWeightCR', dict(default=False, action="store_true", 
+                            help="Update the Weight Map for CR.")],
         ['fwhm'      , dict(default=None, type=float, 
                             help="Set FWHM [pixels] value that overrides the header")],
         ['minSigma'  , dict(default=5, type=float, 
@@ -433,9 +433,11 @@ class CosmicMasker(BaseMasker):
             self.image.mask[masked_interp] |= MASKBITS.BADPIX_INTERP
          
         # 3. The Weight
-        self.image.weight[masked_cr]         = 0 # Set to zero weight CR-detected and interpolated pixels
-        self.image.weight[masked_bad_interp] = 0 # Set to zero weight extra bad-pixels interpolated by immask
-        #self.image.weight[masked_interp]   = 0 # PLEASE REVISE -- this was wrong !!!
+        if self.updateWeightCR:
+            logging.info("Setting CR pixels in map weight to zero")
+            self.image.weight[masked_cr]         = 0 # Set to zero weight CR-detected and interpolated pixels
+            self.image.weight[masked_bad_interp] = 0 # Set to zero weight extra bad-pixels interpolated by immask
+            #self.image.weight[masked_interp]   = 0 # PLEASE REVISE -- this was wrong !!!
   
     def update_header(self):
         """
@@ -497,6 +499,9 @@ class StreakMasker(BaseMasker):
                                help="New streak mask bit value")],
         ['maxmask'      , dict(default=1000,type=int,
                                help="Maximum number of streaks to mask [NOT IMPLEMENTED]")],
+        # Update Weight maps
+        ['updateWeightStreaks', dict(default=False, action="store_true", 
+                                     help="Update the Weight Map for streaks.")],
         # Streak objects (probably don't need both)
         ['write_streaks', dict(action="store_true",
                                help="Write out streak objects")],
@@ -731,7 +736,9 @@ class StreakMasker(BaseMasker):
         # set the streak bit
         self.image.mask[ypix,xpix] = self.image.mask[ypix,xpix] | self.setbit 
         # and zero out the weight
-        self.image.weight[ypix,xpix] = 0
+        if self.updateWeightStreaks:
+            logging.info("Setting Streak pixels in map weight to zero")
+            self.image.weight[ypix,xpix] = 0
         # and update the header
         self.update_header()
 
