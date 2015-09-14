@@ -146,6 +146,8 @@ class CosmicMasker(BaseMasker):
                             help="CRs must be > this many sigma above sky")],
         ['min_DN'    , dict(default=150, type=int, 
                             help="Minimum DN (== electrons/gain) for detection")],
+        ['fractionCR', dict(default=5, action="store_true", 
+                            help="Fraction (in percentage) of the image that can be flagged as CR rays [default=5 percent]")],
         ])
 
     def run(self):
@@ -382,7 +384,9 @@ class CosmicMasker(BaseMasker):
         crConfig.min_DN      = self.min_DN
 
         nx,ny = self.image.data.shape
-        crConfig.nCrPixelMax = int(nx*ny/3) # 1e6 will not work, needs an integer
+        crConfig.nCrPixelMax = int(100*nx*ny/self.fractionCR) # 1e6 will not work, needs an integer
+        #crConfig.nCrPixelMax = int(nx*ny/3) # 1e6 will not work, needs an integer
+
         if self.interpCR:
             crConfig.keepCRs  = False # Do interpolate
             logging.info("Will erase detected CRs -- interpolate CRs on SCI image")
@@ -393,8 +397,16 @@ class CosmicMasker(BaseMasker):
         # Now, we do the magic
         tCR = time.time()
         logging.info("Starting CR finder")
-        self.crs = measAlg.findCosmicRays(self.mi, psf, background, pexConfig.makePolicy(crConfig))
-        logging.info("Found CR in %s for: %s" % (elapsed_time(tCR,verb=False),self.image.sourcefile))
+        try:
+            self.crs = measAlg.findCosmicRays(self.mi, psf, background, pexConfig.makePolicy(crConfig))
+            logging.info("Found CR in %s for: %s" % (elapsed_time(tCR,verb=False),self.image.sourcefile))
+            self.NCRs = len(self.crs)
+
+        except Exception as e:
+            logging.warning("Masking CR failure for %s" % self.image.sourcefile)
+            logging.warning("With message: %s" % str(e))
+            self.crs  = False
+            self.NCRs = -1
 
         # Dilate interpolation working on the mi element
         if self.dilateCR and self.interpCR:
@@ -417,8 +429,12 @@ class CosmicMasker(BaseMasker):
         # The bad pixels that were interpolated before CR detection
         masked_bad_interp = self.masked_bad_interp
         NCR           = len(masked_cr[masked_cr==True])
-        logging.info("Detected:   %d CRs in %s"%(len(self.crs),self.image.sourcefile))
-        logging.info("Containing: %d CR-pixels"%NCR)
+        if self.crs:
+            logging.info("Detected:   %d CRs in %s"%(self.NCRs,self.image.sourcefile))
+            logging.info("Containing: %d CR-pixels"%NCR)
+        else:
+            logging.info("No CR Detected in %s due to failure" % self.image.sourcefile)
+            
          
         # 1. The Science 
         # Put back the CRs in case we don't want to interp
@@ -443,7 +459,7 @@ class CosmicMasker(BaseMasker):
         """
         Add records to the header of the fits files
         """
-        rec = dict(name='DESNCRAY', value=len(self.crs),
+        rec = dict(name='DESNCRAY', value=self.NCRs,
                    comment="Number of cosmic rays masked")
         self.image.header.add_record(rec)
 
