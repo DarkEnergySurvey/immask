@@ -253,6 +253,11 @@ class CosmicMasker(BaseMasker):
         self.MSK = copy.copy(self.image.mask)
         self.WGT = copy.copy(self.image.weight)
          
+        # Temporaly set BAD bit in pixels with BADAMP set to 
+        # using bad amplifiers of CCDs.
+        masked_badamp     = (self.MSK & MASKBITS.BADPIX_BADAMP) > 0
+        self.MSK[masked_badamp] |= MASKBITS.BADPIX_BPM
+
         # Mask for BAD pixels that have been already interpolated
         # (INTERP=4), and keep the original values for later.  It is
         # important to note that we modify only the MSK ndarray, which
@@ -267,6 +272,7 @@ class CosmicMasker(BaseMasker):
          
         # Temporaly change values of BAD & EDGE to BAD to avoid
         # interpolating over glowing edges of ccds also labeled as BAD
+        # *** WARNING ***: The code does not follow this comment!
         self.MSK[masked_edge] = MASKBITS.BADPIX_EDGE
          
         # Temporaryly change the values of BAD & INTERP pixels to
@@ -439,9 +445,11 @@ class CosmicMasker(BaseMasker):
         # 1. The Science 
         # Put back the CRs in case we don't want to interp
         # This is a WORK AROUND FOR crConfig.keepCRs option for now
-        if not self.interpCR:
-            self.scia[masked_cr] = self.image.data[masked_cr] 
-        self.image.data = self.scia.copy() # This is the output now
+        ###if not self.interpCR:
+        ###    self.scia[masked_cr] = self.image.data[masked_cr] 
+        ###self.image.data = self.scia.copy() # This is the output now
+        if self.interpCR:
+            self.image.data[masked_cr] = self.scia[masked_cr]
 
         # 2. The Mask
         self.image.mask[masked_cr] |= MASKBITS.BADPIX_CRAY
