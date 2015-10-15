@@ -9,8 +9,10 @@ Suite of fuctions and class for the DESDM immask python module.
 
 TODO:
  - Iterate through finding streaks (remove each streak before finding next)?
- - Avoid filled corner cases by checking the fraction of area above the streak 
-   that is above sky threshold.
+ - Avoid filled corner cases by checking the fraction of area between streak 
+   and corner that is above sky threshold.
+ - Require the fill_fraction to be uniformly distributed
+ - Check for ellipticity of the streak
 
 @authors: Felipe Menanteau    <felipe@illinois.edu>
 @authors: Alex Drlica-Wagner  <kadrlica@fnal.gov>
@@ -252,7 +254,7 @@ class CosmicMasker(BaseMasker):
         self.SCI = copy.copy(self.image.data)
         self.MSK = copy.copy(self.image.mask)
         self.WGT = copy.copy(self.image.weight)
-         
+
         # Temporaly set BAD bit in pixels with BADAMP set to 
         # using bad amplifiers of CCDs.
         masked_badamp     = (self.MSK & MASKBITS.BADPIX_BADAMP) > 0
@@ -278,9 +280,8 @@ class CosmicMasker(BaseMasker):
         # Temporaryly change the values of BAD & INTERP pixels to
         # INTERP for the MSK ndarray as we do not want to interpolate twice.
         self.MSK[masked_bad_interp] = MASKBITS.BADPIX_INTERP
-  
-        self.masked_bad_interp = masked_bad_interp
 
+        self.masked_bad_interp = masked_bad_interp
   
     def make_lsst_image(self):
         import lsst.afw.image  as afwImage
@@ -530,7 +531,7 @@ class StreakMasker(BaseMasker):
         ['write_streaks', dict(action="store_true",
                                help="Write out streak objects")],
         ['streaksfile', dict(default=False,
-                             help="Output streak objects FITS file")]
+                             help="Output streak objects FITS file")],
         ])
 
     def run(self):
@@ -594,7 +595,7 @@ class StreakMasker(BaseMasker):
          
         # The thresholded image to pass to the Hough transform
         self.searchIm = ((self.subIm > self.nsig_sky*self.sky_err) & ~self.masked)
-         
+
         # Should do a maxarea cut here...
         logging.info("Performing Hough transform now...")
         self.hough, self.theta, self.rho = Hough(self.searchIm).transform()
@@ -633,7 +634,7 @@ class StreakMasker(BaseMasker):
         # Make some preliminary quality cuts
         cut = np.zeros(len(self.detect_objs),dtype=self.detect_objs['CUT'].dtype)
         # Perpendicular objects that look like a readout error...
-        perp_cut = (np.abs(self.detect_objs['SLOPE']) > 150) & (self.detect_objs['WIDTH'] <= 3)
+        perp_cut = (np.abs(self.detect_objs['SLOPE']) > 150) & (self.detect_objs['WIDTH']*self.bin_factor <= 24)
         logging.info("\tCutting %i objects with: SLOPE > %s"%(perp_cut.sum(),150))
         cut |= perp_cut
         # Some additional cuts that could be useful...
@@ -676,14 +677,14 @@ class StreakMasker(BaseMasker):
         logging.info("Performing quality cuts...")
         # More quality cuts
         cut = np.zeros(len(merge_objs),dtype=merge_objs['CUT'].dtype)
+
         # Objects that are too wide...
         width_cut = (merge_objs['WIDTH'] > self.max_width/float(self.bin_factor))
         logging.info("\tCutting %i objects with: WIDTH > %s"%(width_cut.sum(),self.max_width))
         cut |= width_cut
 
         # Objects that span too large an opening angle -- too curvy
-        delta_theta = np.abs(self.theta[merge_objs['XMAX']] - self.theta[merge_objs['XMIN']])
-        theta_cut = delta_theta > np.radians(self.max_angle)
+        theta_cut = merge_objs['DELTA_THETA'] > self.max_angle
         logging.info("\tCutting %i objects with: THETA > %s"%(theta_cut.sum(),self.max_angle))
         cut |= theta_cut
 
@@ -1242,7 +1243,9 @@ class StreakMasker(BaseMasker):
         # Should always be <= 1
         ncounts = im[ypix,xpix].sum()
         npix = im[ypix,xpix].count()
-        return float(ncounts)/npix
+        if npix == 0: return 0
+        else: return float(ncounts)/npix
+       
 
     @staticmethod
     def length(mask,slope):
