@@ -161,10 +161,10 @@ class CosmicMasker(BaseMasker):
                             help="Update the Weight Map for CR.")],
         ['fwhm'      , dict(default=None, type=float, 
                             help="Set FWHM [pixels] value that overrides the header")],
-        ['minSigma'  , dict(default=5., type=float, 
-                            help="CRs must at least this many sigma above sky")],
-        ['min_DN'    , dict(default=150., type=float, 
-                            help="Minimum DN (== electrons/gain) for detection")],
+        ['minSigma'  , dict(default=6.0, type=float, 
+                            help="CRs must be at least this many sigma above sky")],
+        ['min_DN'    , dict(default=600., type=float, 
+                            help="The sum of (bkg subtracted) counts in CRs must be greater than this")],
         ['fractionCR', dict(default=5., type=float, 
                             help="Fraction (in percent) of the image that can be flagged as CRs")],
         ])
@@ -345,6 +345,16 @@ class CosmicMasker(BaseMasker):
         crConfig.minSigma    = self.minSigma
         crConfig.min_DN      = self.min_DN
 
+        # There are serveral undocumented crConfig parameters.
+        # Need to read source code in CR.cc 
+
+        # cond3_fac: Related to the number of std between the peak 
+        # and the surrounding pixels (L750 in CR.cc). 
+        # Lower numbers tend to help with long CR trails.
+        crConfig.cond3_fac   = 1.5
+        # cond3_fac2: ???
+        #crConfig.cond3_fac2  = 0.6 # default
+ 
         nx,ny = self.image.data.shape
         crConfig.nCrPixelMax = int(nx*ny*(self.fractionCR/100.))
 
