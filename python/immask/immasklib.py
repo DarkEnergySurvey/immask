@@ -14,8 +14,8 @@ TODO:
  - Require the fill_fraction to be uniformly distributed
  - Check for ellipticity of the streak
 
-@authors: Felipe Menanteau    <felipe@illinois.edu>
 @authors: Alex Drlica-Wagner  <kadrlica@fnal.gov>
+@authors: Felipe Menanteau    <felipe@illinois.edu>
 @authors: Eli Rykoff          <rykoff@slac.stanford.edu>
 """
 
@@ -73,6 +73,25 @@ def create_logger(level=logging.NOTSET):
     logger.addHandler(handler)
     logger.setLevel(level)
     return logger
+
+#################################
+### Generic Utility Functions ###
+#################################
+
+def int2uint(array):
+    """ Utility function to convert from signed to unsigned integer.
+    This function uses the fact that the unique character codes for
+    unsigned integers are upper case of their signed equivalents.
+    http://docs.scipy.org/doc/numpy/reference/arrays.dtypes.html
+    """
+    # Could add a few sanity checks here...
+    char = array.dtype.char
+    return array.view(char.upper())
+
+def int2bit(value):
+    """ Utility function to convert from integer to binary bit. """
+    return int(np.log(value)/np.log(2))
+
     
 ######################
 ### Masker objects ###
@@ -136,37 +155,59 @@ class CosmicMasker(BaseMasker):
     defaults = odict([
         ['interpCR'  , dict(default=False, action="store_true", 
                             help="Interpolate CR in science image.")],
-        ['dilateCR'  , dict(action="store_true", 
-                            help="Dilate CR mask by 1 pixel.")],
-        ['nGrowCR'   , dict(default=1, type=int, 
+        ['nGrowCR'   , dict(default=None, type=int, 
                             help="Dilate CR mask by nGrowCR pixels.")],
         ['updateWeightCR', dict(default=False, action="store_true", 
                             help="Update the Weight Map for CR.")],
         ['fwhm'      , dict(default=None, type=float, 
                             help="Set FWHM [pixels] value that overrides the header")],
-        ['minSigma'  , dict(default=5, type=float, 
-                            help="CRs must be > this many sigma above sky")],
-        ['min_DN'    , dict(default=150, type=int, 
+        ['minSigma'  , dict(default=5., type=float, 
+                            help="CRs must at least this many sigma above sky")],
+        ['min_DN'    , dict(default=150., type=float, 
                             help="Minimum DN (== electrons/gain) for detection")],
-        ['fractionCR', dict(default=5, action="store_true", 
-                            help="Fraction (in percentage) of the image that can be flagged as CR rays [default=5 percent]")],
+        ['fractionCR', dict(default=5., type=float, 
+                            help="Fraction (in percent) of the image that can be flagged as CRs")],
         ])
+
+    # Dictionary to transform mask from DES bits to LSST bits
+    LSSTMaskPlaneDict = dict(
+        # These bits get mapped to existing LSST definitions
+        SAT       = int2bit(MASKBITS.BADPIX_SATURATE), # Used by findCosmicRays
+        INTRP     = int2bit(MASKBITS.BADPIX_INTERP),   # Used by findCosmicRays
+        CR        = int2bit(MASKBITS.BADPIX_CRAY),     # Used by findCosmicRays
+        DETECTED  = int2bit(MASKBITS.BADPIX_STAR),     
+        EDGE      = int2bit(MASKBITS.BADPIX_EDGE),     
+        SUSPECT   = int2bit(MASKBITS.BADPIX_SUSPECT),  
+        # These bit definitions are added
+        BPM       = int2bit(MASKBITS.BADPIX_BPM),      # Used for interpolation
+        BADAMP    = int2bit(MASKBITS.BADPIX_BADAMP),   # Used for interpolation
+        # These bits are added but not used (could be removed)
+        TRAIL     = int2bit(MASKBITS.BADPIX_TRAIL),    
+        EDGEBLEED = int2bit(MASKBITS.BADPIX_EDGEBLEED),
+        SSXTALK   = int2bit(MASKBITS.BADPIX_SSXTALK),  
+        STREAK    = int2bit(MASKBITS.BADPIX_STREAK),   
+        )
 
     def run(self):
         """
         Top-level function for CR masking
         """
-
+        logging.info("Starting cosmic ray finder")
+        # Should put a catch statment here so that CosmicMasker can't be run twice...
+        
         # Make the individual calls
-        self.make_BAD_mask() 
+        #self.make_BAD_mask() 
         self.make_lsst_image()
-        self.find_CRs()
-        self.fix_pixels_CR()
+        self.find_cosmics()
+        self.fix_cosmics()
         self.update_header()
 
-
-    def get_FWHM(self,image):
-       """ Get the FHWM of the image in pixels. """
+    @staticmethod
+    def get_FWHM(image):
+       """ 
+       Get the FHWM of the image in pixels. 
+       ADW: This would be better in DESImage or somewhere more general
+       """
        header = image.header
        # Read in the pixelscale
        try:
@@ -195,164 +236,74 @@ class CosmicMasker(BaseMasker):
  
        return fwhm
 
-  
-    def set_DECamMaskPlaneDict(self):
+    def make_lsst_mask(self):
+        """ Create a bit mask in the LSST framework. """
+        import lsst.afw.image  as afwImage
+        logging.info("Creating LSST mask plane.")
+
+        # Create an LSST MaskU object from the DES mask
+        MSK = afwImage.MaskU(int2uint(copy.copy(self.image.mask)))
+        # Remap the DES bit definitions into the LSST system (this changes the bits)
+        MSK.conformMaskPlanes(self.LSSTMaskPlaneDict)
+        # The numpy array itself
+        mska = MSK.getArray()
+
+        # Compress several DECam mask bits into the LSST `BAD` bit. 
+        # The LSST algorithm looks for `BAD` pixels explicitly by name
+        # and ignores them (along with `INTRP` and `SAT`)
+        BAD = np.sum([ MASKBITS.BADPIX_BPM,
+                       MASKBITS.BADPIX_SATURATE,
+                       MASKBITS.BADPIX_INTERP,
+                       MASKBITS.BADPIX_BADAMP,
+                       MASKBITS.BADPIX_EDGEBLEED,
+                       ])
+        mska[(self.image.mask & BAD) > 0] |= MSK.getPlaneBitMask('BAD')
+
+        for k,v in odict(MSK.getMaskPlaneDict()).items():
+            logging.info("Plane '%s' -> %i"%(k,v))
+     
+        # Return the LSST MaskU object
+        return MSK
+
+    def make_lsst_image(self):
         """
-        Dictionary to map the LSST bit names (e.g., 'BAD', 'SAT',
-        etc.) to the DECam mask bits (e.g., 'BADPIX_BPM',
-        'BADPIX_SATURATE', etc.).
-
-        This is a bit convoluted because the findCosmicRays routine
-        explicitly uses the 'BAD', 'SAT', 'INTRP', 'CR', and
-        'DETECTED' bits, so these must be defined by name.
-        Additionally the LSST UMask only allows 16 bits, so we need to
-        re-map the DES bitmask names to these predefined bits. Bits
-        that do not already exist in the LSST framework (e.g.,
-        SSXTALK) are added as new bits. The findCosmicRays routine
-        ignores all bad pixel except for those explicitly mentioned
-        above (for example 'SUSPECT' would be ignored).
-
-        To be able to re-run on images, we also define an independent
-        DES 'CRAY' bit in addition to the LSST 'CR' bit. And if that
-        wasn't enough, LSST has a different convention for defining
-        bits (by bit position rather than integer representation).
-
-        To see all LSST mask planes:
-              print msk.printMaskPlanes()
-
+        Create an LSST MaskedImage from the DES SCI, MSK, and WGT arrays.
+        This is the object passed to the LSST findCosmicRays algorithm.
         """
-        def int2bit(value):
-            return int(np.log(value)/np.log(2))
+        import lsst.afw.image  as afwImage
+        logging.info("Making LSST MaskedImage object from SCI, MSK, and VAR")
 
-        self.DECamMaskPlaneDict = dict(
-            BAD       = int2bit(MASKBITS.BADPIX_BPM), 
-            SAT       = int2bit(MASKBITS.BADPIX_SATURATE),
-            INTRP     = int2bit(MASKBITS.BADPIX_INTERP),
-            CRAY      = int2bit(MASKBITS.BADPIX_CRAY),
-            DETECTED  = int2bit(MASKBITS.BADPIX_STAR),
-            TRAIL     = int2bit(MASKBITS.BADPIX_TRAIL),
-            EDGEBLEED = int2bit(MASKBITS.BADPIX_EDGEBLEED),
-            SSXTALK   = int2bit(MASKBITS.BADPIX_SSXTALK),
-            EDGE      = int2bit(MASKBITS.BADPIX_EDGE),
-            STREAK    = int2bit(MASKBITS.BADPIX_STREAK),
-            SUSPECT   = int2bit(MASKBITS.BADPIX_SUSPECT),
-            BADAMP    = int2bit(MASKBITS.BADPIX_BADAMP),
-            )
-
-    def make_BAD_mask(self):
-        """
-        Create a specific boolean masks to temporaryly deal with BPM
-        interpolation Mask for the BAD pixels mask, this won't be
-        requited if all of the BPM are masked by imdetrend in the
-        future. It takes the following bit from the maskbit plane:
-            BADPIX_BPM, BADPIX_INTERP, BADPIX_EDGE
-        """
-
-        logging.info("Creating BAD/BPM pixel mask for interpolation")
-
-        # Copy the image data to temporary arrays that will be altered
         self.SCI = copy.copy(self.image.data)
         self.MSK = copy.copy(self.image.mask)
         self.WGT = copy.copy(self.image.weight)
 
-        # Temporaly set BAD bit in pixels with BADAMP set to 
-        # using bad amplifiers of CCDs.
-        masked_badamp     = (self.MSK & MASKBITS.BADPIX_BADAMP) > 0
-        self.MSK[masked_badamp] |= MASKBITS.BADPIX_BPM
-
-        # Mask for BAD pixels that have been already interpolated
-        # (INTERP=4), and keep the original values for later.  It is
-        # important to note that we modify only the MSK ndarray, which
-        # is the one used by the LSST framework. The original
-        # unmodified values are kept in the DESImage.
-        masked_bad        = (self.MSK & MASKBITS.BADPIX_BPM) > 0
-        masked_bad_interp = ((self.MSK & MASKBITS.BADPIX_INTERP) > 0) & masked_bad
-         
-        # Create a boolean mask of the glowing edges, we don't need to
-        # keep the original values for later, as they are kept in the OUT_MSK copy.
-        masked_edge = (self.MSK & MASKBITS.BADPIX_EDGE) > 0
-         
-        # Temporaly change values of BAD & EDGE to BAD to avoid
-        # interpolating over glowing edges of ccds also labeled as BAD
-        # *** WARNING ***: The code does not follow this comment!
-        self.MSK[masked_edge] = MASKBITS.BADPIX_EDGE
-         
-        # Temporaryly change the values of BAD & INTERP pixels to
-        # INTERP for the MSK ndarray as we do not want to interpolate twice.
-        self.MSK[masked_bad_interp] = MASKBITS.BADPIX_INTERP
-
-        self.masked_bad_interp = masked_bad_interp
-  
-    def make_lsst_image(self):
-        import lsst.afw.image  as afwImage
-
-        """
-        Create and LSST-like image from the SCI, MSK and WGT
-        ndarrays. We pass them into the LSST framework structure to call
-        the CR finder.
-        """
-  
-        logging.info("Making LSST image structure from SCI, MSK and VAR")
-        # 0 Set up the Mask Plane dictionay for DECam
-        self.set_DECamMaskPlaneDict()
-        # 1 - Create the science image
-        self.sci = afwImage.ImageF(self.SCI)
-        # 2 - Create the mask plane (must be unsigned)
-        self.msk = afwImage.MaskU(int2uint(self.MSK))
-        #self.msk = afwImage.MaskU(self.MSK)
-        self.msk.conformMaskPlanes(self.DECamMaskPlaneDict) 
-         
-        # 3 - The variance Image (could be done in DESImage)
+        # Could be done with DESImage.get_variance (but doesn't fix bad values)
         self.WGT_fixed = np.where(self.WGT<=0, self.WGT.max()/1e6, self.WGT) # Fix values < 0
         self.VAR = 1/self.WGT_fixed
+
+        # 1 - Create the science image
+        self.sci = afwImage.ImageF(self.SCI)
+        # 2 - Create the mask plane (must be unsigned int)
+        self.msk = self.make_lsst_mask()
+        # 3 - The variance image 
         self.var = afwImage.ImageF(self.VAR)
         # Into numpy-arrays to handle some numpy fast operations
         self.scia = self.sci.getArray()
         self.mska = self.msk.getArray()
         self.vara = self.var.getArray()
          
-        # **************************************************************
-        # This part is required to rerun cosmic ray masking on
-        # existing images, i.e. ccd images already with cosmic ray on
-        # the weight/mask images.  We need to set the 0s in the
-        # inverse variance for the existing cosmic rays (CRAY) to the
-        # median. Notice that CRAY is the "fake" name for the existing
-        # cosmic rays mask plane. The plane with the newly detected
-        # one is called "CR" in the LSST frame work and that is the
-        # one we should use when handlying the cosmic rays detected
-        # with the LSST function.  *** Only need for images with
-        # existing CRAY plane ****
-        # **************************************************************
-
-        CRAY     = self.msk.getPlaneBitMask("CRAY") # LSST value for DES cosmic rays
-        CR       = self.msk.getPlaneBitMask("CR")   # LSST value for LSST cosmic rays
-
-        cr_prev  = np.where(self.mska & CRAY)
-        NCR_prev = len(cr_prev[0])
-        if NCR_prev > 0:
-            logging.info("CRs previously found in image -- will be fixed before CR")
-            median_rep            = np.median(self.vara)
-            logging.info("Fixing weight map with median=%.1f for those %d CR-pixels"%(NCR_prev, median_rep))
-            self.vara[cr_prev]    = median_rep # The LSST handle
-            self.image.weight[cr_prev] = median_rep # The original array
-            logging.info("Fixing mask plane for those CR-pixels too ")
-            # Remove the LSST CR bit from the mask array
-            self.mska[cr_prev]    = self.mska[cr_prev] - CR 
-            # Remove the DES CRAY bit from the image mask
-            self.image.mask[cr_prev] = self.image.mask[cr_prev] - MASKBITS.BADPIX_CRAY 
-
-        # ************************************************************
         # Make an LSST masked image (science, mask, and weight) 
         self.mi = afwImage.makeMaskedImage(self.sci, self.msk, self.var)
-  
-    def find_CRs(self,**kwargs):
+        return self.mi
+
+    def find_cosmics(self,**kwargs):
         """
         Find the cosmic rays in the science image using
         lsst.meas.algorithms.findCosmicRays
         """
         # Load the the LSST modules here to avoid problems elsewhere in case they are not present
         import lsst.meas.algorithms as measAlg
-        import lsst.ip.isr          as ip_isr
+        import lsst.ip.isr          as ipIsr
         import lsst.afw.math        as afwMath
         import lsst.pex.config      as pexConfig
          
@@ -368,108 +319,115 @@ class CosmicMasker(BaseMasker):
 
         # Avoid too small psf_radius...
         if psf_radius < 2:
-            logging.warning("psf_radius %s is too small"%psf_radius)
+            logging.warning("psf_radius = %.2f is too small"%psf_radius)
             psf_radius = 2 # pixels(?)
-            logging.warning("Setting psf_radius to %s "%psf_radius)
+            logging.warning("Setting psf_radius = %.2f"%psf_radius)
 
-        # Interpolate bad pixels before finding CR to avoid false detections
         # Recover FWHM from psf value
         fwhm  = 2*np.sqrt(2*np.log(2))*psf_radius # FM: This is the right expression -- corrected 
-        logging.info("Will use fwhm %s for CR/BAD interpolation"%fwhm)
-        logging.info("Interpolating BPM/BAD pix mask")
-        ip_isr.isr.interpolateFromMask(self.mi, fwhm, growFootprints=0, maskName='BAD')
-         
-        # simple background estimation to use on findCosmicRays
-        background = afwMath.makeStatistics(self.mi.getImage(), afwMath.MEANCLIP).getValue()
+        logging.info("Using FWHM = %.2f for interpolation"%fwhm)
 
-        logging.info("Setting up background at: %.1f [counts]"%background)
+        # Interpolate some bad pixels before finding CR to avoid false detections
+        maskName = 'BPM'
+        logging.info("Interpolating '%s' pixel mask"%maskName)
+        ipIsr.interpolateFromMask(self.mi, fwhm, growFootprints=0, maskName=maskName)
+         
+        # Simple background estimation to use on findCosmicRays.
+        # Ignore pixels with the 'BAD' bit set.
+        sctrl = afwMath.StatisticsControl()
+        #sctrl.setAndMask(self.msk.getPlaneBitMask("BAD"))
+        sctrl.setAndMask(self.msk.getPlaneBitMask(["BPM","SAT","BADAMP"]))
+        background = afwMath.makeStatistics(self.mi, afwMath.MEANCLIP, sctrl).getValue()
+        logging.info("Setting background at: %.1f [counts]"%background)
 
         # Tweak some of the configuration and call FindCosmicRays
-        # More info on lsst/meas/algorithms/findCosmicRaysConfig.py
+        # More info in lsst/meas/algorithms/findCosmicRaysConfig
         crConfig             = measAlg.FindCosmicRaysConfig()
         crConfig.minSigma    = self.minSigma
         crConfig.min_DN      = self.min_DN
 
         nx,ny = self.image.data.shape
-        crConfig.nCrPixelMax = int(100*nx*ny/self.fractionCR) # 1e6 will not work, needs an integer
-        #crConfig.nCrPixelMax = int(nx*ny/3) # 1e6 will not work, needs an integer
+        crConfig.nCrPixelMax = int(nx*ny*(self.fractionCR/100.))
 
+        # The LSST algorithm does not respect the 'keepCRs' flag
+        # We need to explicitly remove interpolated pixels later on.
         if self.interpCR:
             crConfig.keepCRs  = False # Do interpolate
-            logging.info("Will erase detected CRs -- interpolate CRs on SCI image")
+            logging.info("Will interpolate CRs on the output image")
         else:
             crConfig.keepCRs  = True # Do not interpolate -- THIS DOESN'T WORK!!!!!
-            logging.info("Will keep detected CRs -- no interpolation on SCI image")
+            logging.info("Will *not* interpolate CRs on the output image")
 
-        # Now, we do the magic
-        tCR = time.time()
-        logging.info("Starting CR finder")
+        # Now, we feed the lsst black box
         try:
+            tLSST = time.time()
             self.crs = measAlg.findCosmicRays(self.mi, psf, background, pexConfig.makePolicy(crConfig))
-            logging.info("Found CR in %s for: %s" % (elapsed_time(tCR,verb=False),self.image.sourcefile))
+            logging.info("Ran measAlg.findCosmicRays in: %s"%(elapsed_time(tLSST,verb=False)))
             self.NCRs = len(self.crs)
-
         except Exception as e:
-            logging.warning("Masking CR failure for %s" % self.image.sourcefile)
-            logging.warning("With message: %s" % str(e))
+            logging.warning("Masking CR failed for %s" % self.image.sourcefile)
+            logging.warning("With message: \n%s" % str(e))
             self.crs  = False
             self.NCRs = -1
+            return
 
-        # Dilate interpolation working on the mi element
-        if self.dilateCR and self.interpCR:
-            logging.info("Dilating CR pix mask by %s pixel(s):" % self.nGrowCR)
-            ip_isr.isr.interpolateFromMask(self.mi, fwhm, growFootprints=self.nGrowCR,maskName='CR')
-  
-    def fix_pixels_CR(self):
+        # Dilate the CR mask by nGrowCR pixels
+        # WARNING: This will also dilate any pre-existing pixels with the CR mask bit set
+        if self.nGrowCR:
+            logging.info("Dilating CR pixel mask by %s pixel(s)"%self.nGrowCR)
+            defectList = ipIsr.getDefectListFromMask(self.mi,maskName='CR',growFootprints=self.nGrowCR)
+            ipIsr.maskPixelsFromDefectList(self.mi,defectList,maskName='CR')
+            if self.interpCR:
+                logging.info("Interpolating dilated CR pixels")
+                ipIsr.interpolateDefectList(self.mi,defectList,fwhm,fallbackValue=None)
+
+    def fix_cosmics(self):
         """
-        Fix newly interpolated bits and CRs found in the mask and weight
-        images. This need to be done after the CR have been detected.
+        Set pixels in the output image (DESImage).
+        This needs to be run after the CRs are detected (ie, after `find_cosmics`).
+          IMAGE: If requested ('--interpCRs', the image plane will be interpolated
+          MASK:  The mask plane will have the BADPIX_CRAY bit set.
+          WEIGHT:If requested ('--updateWeightCR'), the weight plane will be set to zero.
         """
-         
         # Extract the CR detected and INTRP pixels
-        CRbit     = self.msk.getPlaneBitMask("CR")    # Gets the value for CR    (2^3=8)
-        INTERPbit = self.msk.getPlaneBitMask("INTRP") # Gets the value for INTRP (2^2=4)
+        CRbit     = self.msk.getPlaneBitMask("CR")    # Gets the value for LSST CR
+        INTERPbit = self.msk.getPlaneBitMask("INTRP") # Gets the value for LSST INTRP
          
         # Create a boolean selection CR-mask and INTRP from the requested bits
         masked_interp = (self.mska & INTERPbit) > 0 
         masked_cr     = (self.mska & CRbit) > 0
-        # The bad pixels that were interpolated before CR detection
-        masked_bad_interp = self.masked_bad_interp
-        NCR           = len(masked_cr[masked_cr==True])
+        NCRpix        = len(masked_cr[masked_cr==True])
         if self.crs:
-            logging.info("Detected:   %d CRs in %s"%(self.NCRs,self.image.sourcefile))
-            logging.info("Containing: %d CR-pixels"%NCR)
+            logging.info("Detected %d CRs containing %d pixels"%(self.NCRs,NCRpix))
         else:
-            logging.info("No CR Detected in %s due to failure" % self.image.sourcefile)
-            
-         
-        # 1. The Science 
-        # Put back the CRs in case we don't want to interp
-        # This is a WORK AROUND FOR crConfig.keepCRs option for now
-        ###if not self.interpCR:
-        ###    self.scia[masked_cr] = self.image.data[masked_cr] 
-        ###self.image.data = self.scia.copy() # This is the output now
-        if self.interpCR:
-            self.image.data[masked_cr] = self.scia[masked_cr]
+            logging.info("No CRs detected due to failure.")
+            return
 
+        # 1. The Image
+        # The LSST crConfig.keepCRs option is broken and always interpolates
+        # This controls when the interpolated values make it back to the DESImage
+        if self.interpCR:
+            logging.info("Interpolating CR pixels in output image plane")
+            self.image.data[masked_cr] = self.scia[masked_cr]
         # 2. The Mask
+        logging.info("Setting CRAY bit in output mask plane")
         self.image.mask[masked_cr] |= MASKBITS.BADPIX_CRAY
         if self.interpCR:
+            logging.info("Setting INTERP bit in output mask plane")
             self.image.mask[masked_interp] |= MASKBITS.BADPIX_INTERP
          
         # 3. The Weight
         if self.updateWeightCR:
-            logging.info("Setting CR pixels in map weight to zero")
-            self.image.weight[masked_cr]         = 0 # Set to zero weight CR-detected and interpolated pixels
-            self.image.weight[masked_bad_interp] = 0 # Set to zero weight extra bad-pixels interpolated by immask
-            #self.image.weight[masked_interp]   = 0 # PLEASE REVISE -- this was wrong !!!
+            logging.info("Setting zero weight in output weight plane")
+            # Set to zero weight CR-detected and interpolated pixels
+            self.image.weight[masked_cr]         = 0 
   
     def update_header(self):
         """
         Add records to the header of the fits files
         """
         rec = dict(name='DESNCRAY', value=self.NCRs,
-                   comment="Number of cosmic rays masked")
+                   comment="Number of masked cosmic rays")
         self.image.header.add_record(rec)
 
     
@@ -550,6 +508,8 @@ class StreakMasker(BaseMasker):
 
         tSTREAKS = time.time()
         logging.info("Starting streak finder")
+
+        # Should put a catch statment here so that StreakMasker can't be run twice...
 
         # Read in the background image nd-array
         if self.bkgfile is not None:
@@ -1735,6 +1695,7 @@ def run(args):
     if 'all' in commands: commands = ['cosmics','streaks']
     for command in commands:
         logging.info('Running %s...'%command)
+        start = time.time()
         if command == 'cosmics':
             cosmics = CosmicMasker(image, **kwargs)
         if command == 'streaks':
@@ -1744,6 +1705,8 @@ def run(args):
         #    stars = StarMasker(image, **kwargs)
         #if command == 'bleeds':
         #    bleeds = BleedMasker(image, **kwargs)
+
+        logging.info("Ran %s in %s."%(command,elapsed_time(start,verb=False)))
 
 
     # Set up the writing method for despyfits
@@ -1777,16 +1740,6 @@ def extract_filename(filename):
     filename = os.path.expandvars(filename)
     filename = os.path.expanduser(filename)
     return filename
-
-def int2uint(array):
-    """ Utility function to convert from signed to unsigned integer.
-    This function uses the fact that the unique character codes for
-    unsigned integers are upper case of their signed equivalents.
-    http://docs.scipy.org/doc/numpy/reference/arrays.dtypes.html
-    """
-    # Could add a few sanity checks here...
-    char = array.dtype.char
-    return array.view(char.upper())
     
 if __name__ == "__main__":
 
