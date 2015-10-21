@@ -196,7 +196,6 @@ class CosmicMasker(BaseMasker):
         # Should put a catch statment here so that CosmicMasker can't be run twice...
         
         # Make the individual calls
-        #self.make_BAD_mask() 
         self.make_lsst_image()
         self.find_cosmics()
         self.fix_cosmics()
@@ -249,7 +248,7 @@ class CosmicMasker(BaseMasker):
         mska = MSK.getArray()
 
         # Compress several DECam mask bits into the LSST `BAD` bit. 
-        # The LSST algorithm looks for `BAD` pixels explicitly by name
+        # The LSST algorithm looks for `BAD` pixels by name
         # and ignores them (along with `INTRP` and `SAT`)
         BAD = np.sum([ MASKBITS.BADPIX_BPM,
                        MASKBITS.BADPIX_SATURATE,
@@ -260,7 +259,7 @@ class CosmicMasker(BaseMasker):
         mska[(self.image.mask & BAD) > 0] |= MSK.getPlaneBitMask('BAD')
 
         for k,v in odict(MSK.getMaskPlaneDict()).items():
-            logging.info("Plane '%s' -> %i"%(k,v))
+            logging.debug("Plane '%s' -> %i"%(k,v))
      
         # Return the LSST MaskU object
         return MSK
@@ -352,10 +351,12 @@ class CosmicMasker(BaseMasker):
         # The LSST algorithm does not respect the 'keepCRs' flag
         # We need to explicitly remove interpolated pixels later on.
         if self.interpCR:
-            crConfig.keepCRs  = False # Do interpolate
+            # Interpolate the image plane
+            crConfig.keepCRs  = False 
             logging.info("Will interpolate CRs on the output image")
         else:
-            crConfig.keepCRs  = True # Do not interpolate -- THIS DOESN'T WORK!!!!!
+            # Do not interpolate -- THIS DOESN'T WORK!!!!!
+            crConfig.keepCRs  = True 
             logging.info("Will *not* interpolate CRs on the output image")
 
         # Now, we feed the lsst black box
@@ -372,7 +373,7 @@ class CosmicMasker(BaseMasker):
             return
 
         # Dilate the CR mask by nGrowCR pixels
-        # WARNING: This will also dilate any pre-existing pixels with the CR mask bit set
+        # WARNING: This also dilates any pre-existing pixels with the CR mask bit set
         if self.nGrowCR:
             logging.info("Dilating CR pixel mask by %s pixel(s)"%self.nGrowCR)
             defectList = ipIsr.getDefectListFromMask(self.mi,maskName='CR',growFootprints=self.nGrowCR)
