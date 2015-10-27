@@ -1651,11 +1651,11 @@ def cmdline():
     #general.add_argument('--compress', action="store_true", help="RICE/fpack compress output")
     general.add_argument('--outdir',default="qa", help="Path to QA output files")
 
-    # Indirect method for despyfits
-    general.add_argument('--indirect_write',default=False,action="store_true",
-                         help="Use indirect write mechanism in despyfits")
-    general.add_argument('--indirect_write_prefix',default='/tmp/desimage-',action="store",
-                         help="Set the prefix for the indirect write mechanism in despyfits")
+    ## Indirect method for despyfits
+    #general.add_argument('--indirect_write',default=False,action="store_true",
+    #                     help="Use indirect write mechanism in despyfits")
+    #general.add_argument('--indirect_write_prefix',default='/tmp/desimage-',action="store",
+    #                     help="Set the prefix for the indirect write mechanism in despyfits")
 
     subparsers=parser.add_subparsers(dest='command',title='Available subcommands')
 
@@ -1720,9 +1720,9 @@ def run(args):
         logging.info("Ran %s in %s."%(command,elapsed_time(start,verb=False)))
 
 
-    # Set up the writing method for despyfits
-    despyfits.DESImage.use_indirect_write    = args.indirect_write
-    despyfits.DESImage.indirect_write_prefix = args.indirect_write_prefix 
+    ## Set up the writing method for despyfits
+    #despyfits.DESImage.use_indirect_write    = args.indirect_write
+    #despyfits.DESImage.indirect_write_prefix = args.indirect_write_prefix 
 
     # Update the header information
     timenow   = time.asctime() # Time stamp for new fits files
