@@ -456,6 +456,8 @@ class StreakMasker(BaseMasker):
                                help="File basename diagnostic plots.")],
         ['template_dir', dict(default="/dev/null",
                               help="Directory containing Hough template.")],
+        ['galfile'     , dict(default=None,
+                               help="Galaxy masking file")],
         # Image pre-processing
         ['bin_factor'   , dict(default=8, type=int, 
                                help="Binning factor to beat down sky noise")],
@@ -535,6 +537,9 @@ class StreakMasker(BaseMasker):
 
         # Create a boolean selection mask from the requested bits
         self.masked = ((self.image.mask & self.maskbits ) > 0)
+        # Mask large bright galaxies
+        if self.galfile:
+            self.masked |= self.mask_galaxies(self.galfile)
 
         # Dilate bright star mask
         if (self.maskbits & MASKBITS.BADPIX_STAR) > 0:
@@ -903,6 +908,90 @@ class StreakMasker(BaseMasker):
                    comment="Number of streaks masked")
         self.image.header.add_record(rec)
 
+    def mask_galaxies(self,filename,bit=MASKBITS.BADPIX_STAR,factor=1.7):
+        """
+        Mask the regions around bright galaxies from the Hyper-LEDA
+        database.
+
+        Parameters:
+        filename : name of input csv file
+        bit      : bit value to use for masking
+        factor   : factor by which to expand stated diameter
+        Returns:
+        out_mask : The output pixel mask with new mask bit set
+        """
+        from matplotlib.path import Path
+        from matplotlib.patches import Ellipse
+
+        logging.info('Bright galaxy mask: %s'%filename)
+        # Read the bright galaxy file
+        names = ['name','ra','dec','logd25','logr25','pa','bt']
+        data = np.genfromtxt(filename,delimiter=',',names=names,dtype=None)
+        # Convert nan position angles to zero
+        # Might also want to check that ellipticity is small?
+        data['pa'][np.isnan(data['pa'])] = 0.
+        out_mask = np.zeros(self.image.mask.shape,dtype=self.image.mask.dtype)
+
+        ra,dec = data['ra'],data['dec']
+        # Galaxy radius (from log10(D/0.1 arcmin) to deg)
+        size = factor*(10**data['logd25']/2. * 0.1)/60. 
+        ramin,ramax = ra-size,ra+size
+        decmin,decmax = dec-size,dec+size
+
+        ccd_ramin=self.image.header['RACMIN']
+        ccd_ramax=self.image.header['RACMAX']
+        ccd_decmin=self.image.header['DECCMIN']
+        ccd_decmax=self.image.header['DECCMAX']
+
+        # Tying to be robust to RA = 0 boundary...
+        if self.image.header['CROSSRA0'].startswith('Y'):
+            logging.debug("CROSSRA0 = Y")
+            ramax -= 360.
+            ccd_ramax -= 360.
+
+        sel  = (ramax > ccd_ramin)
+        sel &= (ramin < ccd_ramax)
+        sel &= (decmax > ccd_decmin)
+        sel &= (decmin < ccd_decmax)
+
+        if not np.sum(sel): return out_mask
+
+        wcs = wcsutil.WCS(self.image.header)
+
+        for d in data[sel]:
+            logging.info("Masking galaxy: %s"%d['name'])
+            xpix,ypix = wcs.sky2image(d['ra'],d['dec'])
+            
+            xpix = xpix.astype(int)
+            ypix = ypix.astype(int)
+
+            # major axis (diameter in pix)
+            dmajor = int(factor*10**d['logd25'] * (0.1 * 60 / 0.263))
+            # minor axis (diameter in pix)
+            dminor = int(dmajor/10**d['logr25'])
+            # position angle (degrees)
+            theta = 90. - d['pa']
+
+            #http://stackoverflow.com/a/47980627/4075
+            ell = Ellipse((xpix,ypix),width=dminor,height=dmajor,angle=theta)
+            path = Path(ell.get_verts())
+
+            x = np.arange(-dmajor/2,dmajor/2)
+            xx,yy = np.meshgrid(x,x)
+            xidx = xpix + xx.flat
+            yidx = ypix + yy.flat
+            points = np.vstack([xidx,yidx]).T
+            mask = path.contains_points(points)
+
+            ymax, xmax = out_mask.shape
+            mask &= ((xidx >= 0) & (xidx < xmax)) 
+            mask &= ((yidx >= 0) & (yidx < ymax))
+            logging.debug("Masking %i pixels"%(mask.sum()))
+            
+            out_mask[yidx[mask],xidx[mask]] = bit
+
+        logging.info("Masked %i pixels"%(out_mask>0).sum())
+        return out_mask
 
     # This is the start of routines that are more or less
     # loosely bound to the StreakMasker class. The first
