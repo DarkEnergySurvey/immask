@@ -9,10 +9,10 @@
 # Restrict with the SQL clause:    (bt <= 15.5 and objtype='G' and logd25 between 1.0 and 2.5) 
 # OR (objname in ('PGC008328', 'PGC008340', 'PGC008330'))
 #
-# Display the fields:              objname as NAME,al2000*15 as ra,de2000 as dec, logd25, logr25, pa, bt
+# Display the fields:              objname as name,al2000*15 as ra,de2000 as dec, logd25, logr25, pa, bt
 # Order by:                        al2000
 # Description of each column
-# objname as NAME: ----- Object name
+# objname as name: ----- Object name
 # al2000*15 as ra: ----- Right ascension (deg)
 # de2000 as dec: ------- Declination (deg)
 #  logd25: ------------- Log10 diameter (0.1 arcmin) at mu=25 mag/asec^2
