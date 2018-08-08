@@ -193,7 +193,8 @@ class CosmicMasker(BaseMasker):
         Top-level function for CR masking
         """
         logging.info("Starting cosmic ray finder")
-        # Should put a catch statment here so that CosmicMasker can't be run twice...
+        # ADW: Should we put a catch statment here so that
+        # CosmicMasker can't be run twice?
         
         # Make the individual calls
         self.make_lsst_image()
@@ -522,7 +523,8 @@ class StreakMasker(BaseMasker):
         tSTREAKS = time.time()
         logging.info("Starting streak finder")
 
-        # Should put a catch statment here so that StreakMasker can't be run twice...
+        # ADW: Should we put a catch statment here so that
+        # StreakMasker can't be run twice?
 
         # Read in the background image nd-array
         if self.bkgfile is not None:
@@ -555,10 +557,21 @@ class StreakMasker(BaseMasker):
             self.subIm  = self.bin_pixels(self.subIm,self.bin_factor)
             self.masked = np.ceil(self.bin_pixels(self.masked,self.bin_factor)).astype(bool)
 
+        # Skip image if it is too heavily masked
+        maskfrac = float(self.masked.sum())/self.masked.size
+        if maskfrac > 0.85:
+            logging.warn("Image is too heavily masked; skipping...")
+            self.subIm.fill(1)
+            self.masked.fill(False)
+
         # Calculate sky noise
         logging.info("Measuring sky noise...")
         usepix = np.where(~self.masked)
-        self.sky_bkg, self.sky_err, self.sky_skew = self.mmm(self.subIm[usepix])
+        try:
+            self.sky_bkg, self.sky_err, self.sky_skew = self.mmm(self.subIm[usepix])
+        except ValueError as e:
+            logger.warn(str(e))
+            self.sky_bkg, self.sky_err, self.sky_skew = 0.0, 0.0, 0.0
 
         # Added to deal with offsets in pca sky subtracted images
         # Might be good for SExtractor background as well...
@@ -935,8 +948,9 @@ class StreakMasker(BaseMasker):
         ra,dec = data['ra'],data['dec']
         # Galaxy radius (from log10(D/0.1 arcmin) to deg)
         size = factor*(10**data['logd25']/2. * 0.1)/60. 
-        ramin,ramax = ra-size,ra+size
-        decmin,decmax = dec-size,dec+size
+        delta_ra,delta_dec = size/np.cos(np.radians(dec)), size
+        ramin,ramax = ra-delta_ra,ra+delta_ra
+        decmin,decmax = dec-delta_dec,dec+delta_dec
 
         ccd_ramin=self.image.header['RACMIN']
         ccd_ramax=self.image.header['RACMAX']
@@ -1481,7 +1495,7 @@ class StreakMasker(BaseMasker):
         integer = 0  # fix this later
      
         if (nsky <= minsky) :
-            raise Exception("Input vector must contain at least %s elements"%minsky)
+            raise ValueError("Input vector must contain at least %s elements"%minsky)
             return np.array(-1.0),np.array(-1.0),np.array(-1.0)
      
         nlast=nsky-1  # hmmm
@@ -1496,7 +1510,7 @@ class StreakMasker(BaseMasker):
         #good=where((sky <= cut2) and (sky >= cut1))
         good=np.where(np.logical_and(sky <= cut2, sky >= cut1))[0]
         if good.size == 0 :
-            raise Exception("No good sky found after cuts.")
+            raise ValueError("No good sky found after cuts.")
             return np.array(-1),np.array(-1),np.array(-1)
      
         delta = sky[good] - skymid
@@ -1524,11 +1538,11 @@ class StreakMasker(BaseMasker):
         while (redo) :
             niter=niter+1
             if (niter > mxiter) :
-                raise Exception("Too many iterations")
+                raise RuntimeError("Too many iterations")
                 return np.array(-1.0),np.array(-1.0),np.array(-1.0)
      
             if ((maximm-minimm) < minsky) :
-                raise Exception("Too few valid sky elements")
+                raise RuntimeError("Too few valid sky elements")
                 return np.array(-1.0),np.array(-1.0),np.array(-1.0)
      
             # Compute Chauvenet rejection criterion.
@@ -1592,7 +1606,7 @@ class StreakMasker(BaseMasker):
 
             nsky=maximm-minimm
             if (nsky < minsky) :
-                raise Exception("Outlier rejection rejected too many sky elements")
+                raise RuntimeError("Outlier rejection rejected too many sky elements")
                 return np.array(-1.0),np.array(-1.0),np.array(-1.0)
      
             skymn = sum/nsky
