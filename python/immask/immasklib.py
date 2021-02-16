@@ -1772,7 +1772,7 @@ def cmdline():
     general.add_argument('--indirect_write', default=False, action="store_true", help="Use indirect write mechanism in despyfits")
     general.add_argument('--indirect_write_prefix', default=None, action="store", help="Set the prefix for the indirect write mechanism in despyfits")
 
-    subparsers = parser.add_subparsers(dest='command', title='Available subcommands')
+    subparsers = cmdparser.add_subparsers(dest='command', title='Available subcommands')
 
     # Cosmic-ray masking subcommmand
     title = 'cosmics'
