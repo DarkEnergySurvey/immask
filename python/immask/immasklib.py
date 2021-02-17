@@ -26,7 +26,7 @@ import fitsio
 import numpy as np
 import scipy.ndimage as ndimage
 from scipy.optimize import fmin
-from scipy.spatial  import cKDTree
+from scipy.spatial import cKDTree
 import matplotlib
 matplotlib.use('Agg')
 from matplotlib.path import Path
@@ -151,9 +151,9 @@ class BaseMasker:
         """ Update the fits header """
         raise Exception("You called update_header on the base class")
 
-
     def _parse(self, **kwargs):
-        for key in np.intersect1d(self.defaults.keys(), kwargs.keys()):
+        for key in list(set(self.defaults.keys()) & set(kwargs.keys())):
+            print(f"key:{key} -- {kwargs[key]}")
             self.__dict__[key] = kwargs[key]
 
     @staticmethod
@@ -1829,9 +1829,9 @@ def run(inargs):
 
     # Set up the writing method for despyfits -- only setup if defined, # otherwise will use the enviromental variable $DESPYFITS_USE_INDIRECT_WRITE
     if args.indirect_write:
-        despyfits.DESImage.use_indirect_write = inargs.indirect_write
+        despyfits.DESImage.use_indirect_write = args.indirect_write
     if args.indirect_write_prefix:
-        despyfits.DESImage.indirect_write_prefix = inargs.indirect_write_prefix
+        despyfits.DESImage.indirect_write_prefix = args.indirect_write_prefix
 
     # Update the header information
     timenow = time.asctime() # Time stamp for new fits files
@@ -1841,7 +1841,7 @@ def run(inargs):
     # Flag for turning off writing
     #if True:
     image.save(args.outname)
-    logging.info("Wrote: %s", inargs.outname)
+    logging.info("Wrote: %s", args.outname)
     #else:
     #    logging.warning("NO FILE SAVED!")
 
