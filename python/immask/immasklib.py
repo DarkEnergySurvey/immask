@@ -1802,7 +1802,7 @@ def cmdline():
     return cmdparser
 
 def run(inargs):
-    create_logger(logging.DEBUG if args.verbose else logging.INFO)
+    create_logger(logging.DEBUG if inargs.verbose else logging.INFO)
 
     commands = [inargs.command]
     kwargs = vars(inargs)
