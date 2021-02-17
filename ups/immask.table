@@ -1,10 +1,9 @@
-setupRequired(despyfits 0.2.9+0)
-setupRequired(despyastro 0.3.3+0)
-setupRequired(pyhough 0.1+8)
-setupRequired(matplotlib 1.3.1+4)
+setupRequired(despyfits 3.0.0+4)
+setupRequired(pyhough 0.2+1)
+setupRequired(matplotlib 3.1.2+2)
 
 # LSST META package with internal and external packages 
-setupRequired(LSSTimmask 0.2.2+2)
+setupRequired(LSSTimmask 0.2.2+4)
 
 envAppend(PYTHONPATH, ${PRODUCT_DIR}/python)
 envAppend(PATH, ${PRODUCT_DIR}/bin)
