@@ -1105,8 +1105,8 @@ class StreakMasker(BaseMasker):
             logging.debug("--- i=%i", i)
             # This code could use some cleanup...
             i1a = rev[rev[good[i]]: rev[good[i] + 1]]
-            xpix = i1a % ncol
-            ypix = i1a / ncol
+            xpix = (i1a % ncol).astype(int)
+            ypix = (i1a / ncol).astype(int)
             pix = list(zip(xpix, ypix))
             npix = len(xpix)
             objs[i]['LABEL'] = good[i]
@@ -1208,7 +1208,7 @@ class StreakMasker(BaseMasker):
         # Rotate back to image coordinates
         xvert = np.cos(alpha) * xvertp - np.sin(alpha) * yvertp
         yvert = np.sin(alpha) * xvertp + np.cos(alpha) * yvertp
-        vertices = np.array(zip(xvert, yvert))
+        vertices = np.array(list(zip(xvert, yvert)))
 
         return vertices
 
