@@ -26,5 +26,4 @@ args.func(args)
 
 #print >>sys.stderr,"# Time:%s" % immask.elapsed_time(t0)
 logging.info("%-12s %s", "Version:", immask.__version__)
-logging.info("%-12s %s", "Revision:", immask.__revision__)
 logging.info("%-12s %s", "Time:", immask.elapsed_time(t0))
