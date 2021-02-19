@@ -1054,12 +1054,12 @@ class StreakMasker(BaseMasker):
 
             x = np.arange(-dmajor/2, dmajor/2)
             xx, yy = np.meshgrid(x, x)
-            xidx = xpix + xx.flat
-            yidx = ypix + yy.flat
+            xidx = (xpix + xx.flat).astype(int)
+            yidx = (ypix + yy.flat).astype(int)
             points = np.vstack([xidx, yidx]).T
             mask = path.contains_points(points)
 
-            ymax, xmax = out_mask.shape[0:2]
+            ymax, xmax = out_mask.shape
             mask &= ((xidx >= 0) & (xidx < xmax))
             mask &= ((yidx >= 0) & (yidx < ymax))
             logging.debug("Masking %i pixels", mask.sum())
