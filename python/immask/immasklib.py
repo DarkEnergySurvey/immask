@@ -837,7 +837,15 @@ class StreakMasker(BaseMasker):
             outname = os.path.join(self.outdir, outbase)
 
         logging.info("Writing streak objects: %s", outname)
-        fitsio.write(outname, self.mask_objs, clobber=True)
+        fits = fitsio.FITS(outname, 'rw', clobber=True)
+        fits.write(self.mask_objs)
+        # Make sure that CCDNUM is in the header.
+        # It's needed for connect_streaks later on
+        try:
+            fits[0].write_key('ccdnum', self.image.header['CCDNUM'], comment="CCD number")
+        except:
+            logging.info("CCDNUM could be inserted in HDU-0 header")
+        fits.close()
 
     def write_streak_mask(self):
         """ Write out streak mask """
@@ -1824,6 +1832,7 @@ def run(inargs):
     commands = [inargs.command]
     kwargs = vars(inargs)
     image = DESImage.load(inargs.filename)
+
     # passing outname into the class
     image.outname = inargs.outname
     if 'all' in commands:

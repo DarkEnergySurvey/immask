@@ -5,7 +5,7 @@ The DESDM single-CCD image masking module.
 import os
 
 __author__ = "Felipe Menanteau, Alex Drlica-Wagner, Eli Rykoff"
-__version__ = '3.0.2'
+__version__ = '3.0.3'
 __revision__= '0'
 version = __version__
 
