@@ -34,12 +34,15 @@ from pyhough.pyhough_lib import Hough
 
 try:
     import pylab as plt
-    import lsst.afw.image as afwImage
-    import lsst.meas.algorithms as measAlg
-    import lsst.ip.isr as ipIsr
-    import lsst.afw.math as afwMath
-    import lsst.pex.config as pexConfig
-except ImportError:
+    import cosmicRays.findCosmicRaysConfig as fcr
+    from cosmicRays.defects import Defects
+    import cosmicRays.isrFunctions as ipIsr
+    import cosmicRays.pexConfig as pexConfig
+    import cosmicRays.convert as pexConvert
+    import libcosmicRays.afw.image as afwImage
+    import libcosmicRays.meas.algorithms as measAlg
+    import libcosmicRays.afw.math as afwMath
+except ImportError as ierr:
     pass
 
 from despyastro import wcsutil
@@ -61,7 +64,7 @@ def configure_logger(logger, logfile=None, level=logging.NOTSET, log_format=None
     Configure an existing logger
     """
     # Define formats
-    if log_format:
+    if log_format is not None:
         FORMAT = log_format
     else:
         FORMAT = '[%(asctime)s.%(msecs)03d][%(levelname)s][%(name)s][%(funcName)s] %(message)s'
@@ -301,7 +304,7 @@ class CosmicMasker(BaseMasker):
         logging.info("Creating LSST mask plane.")
 
         # Create an LSST MaskU object from the DES mask
-        MSK = afwImage.MaskU(int2uint(copy.copy(self.image.mask)))
+        MSK = afwImage.MaskX(np.array(self.image.mask, dtype=np.int32))
         # Remap the DES bit definitions into the LSST system
         # (this changes the bits)
         MSK.conformMaskPlanes(self.LSSTMaskPlaneDict)
@@ -376,10 +379,10 @@ class CosmicMasker(BaseMasker):
         fwhm = 2*np.sqrt(2*np.log(2))*psf_radius  # FM: This is the right expression -- corrected
         logging.info("Using FWHM = %.2f for interpolation", fwhm)
 
-        # Interpolate some bad pixels before finding CR to avoid false detec
+        # Interpolate some bad pixels before finding CR to avoid false detections
         maskName = 'BPM'
         logging.info("Interpolating '%s' pixel mask", maskName)
-        ipIsr.interpolateFromMask(self.mi, fwhm, growFootprints=0, maskName=maskName)
+        ipIsr.interpolateFromMask(self.mi, fwhm, growSaturatedFootprints=0, maskNameList=[maskName])
 
         # Simple background estimation to use on findCosmicRays.
         # Ignore pixels with the 'BAD' bit set.
@@ -390,7 +393,7 @@ class CosmicMasker(BaseMasker):
 
         # Tweak some of the configuration and call FindCosmicRays
         # More info in lsst/meas/algorithms/findCosmicRaysConfig
-        crConfig = measAlg.FindCosmicRaysConfig()
+        crConfig = fcr.FindCosmicRaysConfig()
         crConfig.minSigma = self.minSigma
         crConfig.min_DN = self.min_DN
 
@@ -421,7 +424,7 @@ class CosmicMasker(BaseMasker):
         # Now, we feed the lsst black box
         try:
             tLSST = time.time()
-            self.crs = measAlg.findCosmicRays(self.mi, psf, background, pexConfig.makePolicy(crConfig))
+            self.crs = measAlg.findCosmicRays(self.mi, psf, background, pexConvert.makePropertySet(crConfig))
             logging.info("Ran measAlg.findCosmicRays in: %s", elapsed_time(tLSST, verb=False))
             self.NCRs = len(self.crs)
         except Exception as e:
@@ -436,8 +439,8 @@ class CosmicMasker(BaseMasker):
         # This also dilates any pre-existing pixels with the CR mask bit set
         if self.nGrowCR:
             logging.info("Dilating CR pixel mask by %s pixel(s)", self.nGrowCR)
-            defectList = ipIsr.getDefectListFromMask(self.mi, maskName='CR', growFootprints=self.nGrowCR)
-            ipIsr.maskPixelsFromDefectList(self.mi, defectList, maskName='CR')
+            defectList = Defects.fromMask(self.mi, maskName='CR')
+            ipIsr.maskPixelsFromDefectList(self.mi, defectList, maskName='CR', growFootprints=self.nGrowCR)
             if self.interpCR:
                 logging.info("Interpolating dilated CR pixels")
                 ipIsr.interpolateDefectList(self.mi, defectList, fwhm, fallbackValue=None)
@@ -460,7 +463,7 @@ class CosmicMasker(BaseMasker):
         # Create a boolean selection CR-mask and INTRP from the requested bits
         masked_interp = (self.mska & INTERPbit) > 0
         masked_cr = (self.mska & CRbit) > 0
-        NCRpix = len(masked_cr[masked_cr is True])
+        NCRpix = len(masked_cr[masked_cr == True])  # This must be == and not 'is', numpy does not understand 'is'
         if self.crs:
             logging.info("Detected %d CRs containing %d pixels", self.NCRs, NCRpix)
         else:
@@ -1268,8 +1271,8 @@ class StreakMasker(BaseMasker):
         xmax_ypix = ypix[xpix == xmax]
         xmax_ymin = xmax_ypix.min()
         xmax_ymax = xmax_ypix.max()
-        right_top = (xmax+pad, xmax_ymax+pad)
-        right_bottom = (xmax+pad, xmax_ymin-pad)
+        right_top = (xmax + pad, xmax_ymax + pad)
+        right_bottom = (xmax + pad, xmax_ymin - pad)
         for vertex in [right_top, right_bottom]:
             if vertex not in vertices:
                 vertices.append(vertex)
@@ -1278,8 +1281,8 @@ class StreakMasker(BaseMasker):
         ymin_xpix = xpix[ypix == ymin]
         ymin_xmin = ymin_xpix.min()
         ymin_xmax = ymin_xpix.max()
-        bottom_right = (ymin_xmax+pad, ymin-pad)
-        bottom_left = (ymin_xmin-pad, ymin-pad)
+        bottom_right = (ymin_xmax + pad, ymin - pad)
+        bottom_left = (ymin_xmin - pad, ymin - pad)
         for vertex in [bottom_right, bottom_left]:
             if vertex not in vertices:
                 vertices.append(vertex)
@@ -1325,7 +1328,7 @@ class StreakMasker(BaseMasker):
         out_mask : Mask array with pixels between the lines masked
         """
         out_mask = np.zeros(mask.shape, dtype=int)
-        delta = np.abs(inter1 - inter2)*(factor - 1)/2.
+        delta = np.abs(inter1 - inter2) * (factor - 1) / 2.
         yy, xx = np.indices(mask.shape)
 
         if inter1 > inter2:
@@ -1416,7 +1419,7 @@ class StreakMasker(BaseMasker):
         # Divide the mask into equal-sized chunks each
         # expected to contain 'chunk_size' counts
         chunk_size = 100
-        nchunks = ncounts/chunk_size
+        nchunks = ncounts / chunk_size
         bins = np.linspace(xmin, xmax, nchunks+1, endpoint=True)
         hist, _, rev = StreakMasker.idl_histogram(xpixp, bins=bins)
 
@@ -1566,7 +1569,7 @@ class StreakMasker(BaseMasker):
         maximm = good.max()
         minimm = good.min() - 1
 
-        skymed = 0.5*sky[int((minimm+maximm+1)/2)] + 0.5*sky[int((minimm+maximm)/2+1)]
+        skymed = 0.5 * sky[int((minimm + maximm + 1) / 2)] + 0.5 * sky[int((minimm + maximm) / 2 + 1)]
         skymn = mysum/(maximm-minimm)
         sigma = np.sqrt(sumsq/(maximm-minimm)-np.square(skymn))
         skymn = skymn+skymid  # add back median
@@ -1658,12 +1661,12 @@ class StreakMasker(BaseMasker):
             skymn = skymn + skymid
 
             center = (minimm + 1 + maximm)/2.
-            side = np.round(0.2*(maximm-minimm))/2. + 0.25
-            j = int(np.round(center-side))
-            k = int(np.round(center+side))
+            side = np.round(0.2 * (maximm - minimm)) / 2. + 0.25
+            j = int(np.round(center - side))
+            k = int(np.round(center + side))
 
             # here is a place for readnoise correction...
-            skymed = sky[j:k+1].sum()/(k-j+1)
+            skymed = sky[j:k + 1].sum()/(k - j + 1)
 
             if skymed < skymn:
                 dmod = 3. * skymed - 2. * skymn - skymod
