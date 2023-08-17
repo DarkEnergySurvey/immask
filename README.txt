@@ -1,7 +1,8 @@
 DESDM image masking module
 --------------------------
+Authors: Alex Drlica-Wagner, Eli Rykoff, Felipe Menanteau
 
-Mask satellite streaks and cosmic rays 
+Mask satellite streaks and cosmic rays in DECam images
 
 Requires:
 
